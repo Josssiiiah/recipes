@@ -1,0 +1,20 @@
+{
+  "skill_name": "react-effect-elimination",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review this React component and refactor it so it does not use useEffect for derived state: it stores visibleTodos in state and updates it from todos and filter in an Effect.",
+      "expected_output": "Removes redundant state and Effect, derives visibleTodos during render or uses useMemo only if the filtering is expensive, and explains why this avoids stale renders."
+    },
+    {
+      "id": 2,
+      "prompt": "Fix a React form that sends a POST request from a useEffect after setting submittedData state in handleSubmit.",
+      "expected_output": "Moves the POST request into handleSubmit, removes the submittedData state and Effect, and explains that submitting is event-caused logic."
+    },
+    {
+      "id": 3,
+      "prompt": "A contact edit form resets name and email with useEffect whenever savedContact changes. Refactor it so selecting a different contact resets the form without an Effect.",
+      "expected_output": "Splits the form into an outer wrapper and keyed inner form using savedContact.id as the key, removes the reset Effect, and keeps explicit Reset button behavior."
+    }
+  ]
+}
