@@ -1,90 +1,215 @@
 ---
 name: upload-to-testflight
-description: Upload the Recipes Expo app to Apple TestFlight and monitor the tmux output until the build/submission clearly succeeds, fails, or needs user interaction. Use this skill whenever the user asks to upload, submit, ship, publish, push, release, or send the Recipes app to TestFlight, even if they only say "upload to TestFlight" or "send a new iOS build."
+description: Release an Expo app to Apple TestFlight or publish an EAS Update. Use this skill whenever the user asks to upload, submit, ship, publish, push, release, or send an Expo app to TestFlight, App Store Connect, EAS Build, EAS Submit, or EAS Update. This is the default release workflow for the Recipes, Fitness, and Transcribe Expo apps, even when the user only says "push the TestFlight update" or "send a new iOS build."
 ---
 
-# Upload To TestFlight
+# Expo Release To TestFlight
 
-Use this skill for the Recipes project at:
+Use this skill for Expo app releases, especially these local repos:
 
 ```text
 /Users/josiah/Dev/recipes
+/Users/josiah/Dev/fitness
+/Users/josiah/Dev/transcribe
 ```
 
-The upload command is:
+Prefer the local iOS build process for TestFlight. Do not use cloud-build wrappers
+such as `npx testflight` unless the user explicitly asks for the cloud flow or
+local builds are impossible on the current machine. Local builds avoid EAS cloud
+iOS build quota limits and make the generated IPA path explicit.
+
+## Release Choice
+
+Default to a native TestFlight build when the user mentions TestFlight, App Store
+Connect, iOS build, binary, native build, or "push the TestFlight update."
+
+Use EAS Update only when the user explicitly asks for an OTA/update publish or
+when the change is clearly JS/TS/assets only and compatible with the currently
+installed native runtime. Do not use EAS Update for changes to native modules,
+Expo config, entitlements, permissions, app icons/splash that require native
+regeneration, build profiles, iOS bundle settings, or dependency changes that
+affect native code.
+
+## Project Discovery
+
+Start from the repo root the user is working in. If the repo root does not
+contain `app.json` or `eas.json`, find the Expo app root before running EAS
+commands. For Transcribe, the Expo app root is currently:
+
+```text
+/Users/josiah/Dev/transcribe/apps/mobile
+```
+
+Useful discovery checks:
 
 ```sh
-npx testflight
+pwd
+find . -maxdepth 3 \( -name app.json -o -name app.config.js -o -name app.config.ts -o -name eas.json \) -print
 ```
 
-Run it in tmux so the long-running build and Apple submission can be monitored without losing output.
+Read `app.json` or `app.config.*` and `eas.json` before release so you know the
+app name, slug, iOS bundle identifier, production profile, `autoIncrement`, and
+App Store Connect app ID if configured.
 
-## Workflow
+Use a tmux session prefix based on the repo, for example:
 
-1. Start from the repo root:
+```text
+recipes-testflight-local-YYYYMMDD-HHMM
+fitness-testflight-local-YYYYMMDD-HHMM
+transcribe-testflight-local-YYYYMMDD-HHMM
+```
+
+## Native TestFlight Workflow
+
+1. Create a persistent log directory at the repo root:
 
 ```sh
-cd /Users/josiah/Dev/recipes
+mkdir -p <repo-root>/.codex/logs
 ```
 
-2. Check whether a TestFlight tmux session already exists:
+2. Check for an active release session:
 
 ```sh
 tmux list-sessions
 ```
 
-3. If no active upload session exists, start one named `recipes-testflight`:
+If a relevant TestFlight session is actively running, reuse and monitor it. If a
+session is stale or sitting at a shell prompt from an old run, do not kill it
+unless the user explicitly asks. Create a timestamped session instead.
+
+3. Start a local iOS production build from the Expo app root:
 
 ```sh
-tmux new-session -d -s recipes-testflight -c /Users/josiah/Dev/recipes 'npx testflight'
+tmux new-session -d -s <repo-prefix>-testflight-local-<timestamp> -c <expo-root> 'npx eas build --platform ios --profile production --local --non-interactive 2>&1 | tee <repo-root>/.codex/logs/<repo-prefix>-testflight-local-build-<timestamp>.log'
 ```
-
-If `recipes-testflight` already exists and is actively running an upload, reuse and monitor it. If the existing session is stale or sitting at a shell prompt from an old run, do not kill it unless the user explicitly asks. Create a timestamped session instead, such as `recipes-testflight-YYYYMMDD-HHMM`.
 
 4. Monitor with `tmux capture-pane`, not screenshots:
 
 ```sh
-tmux capture-pane -t recipes-testflight -p -S -500
+tmux capture-pane -t <session-name> -p -S -500
 ```
 
-Poll periodically until there is a clear terminal state.
+Poll periodically until there is a clear terminal state. If the tmux session
+exits before the final pane is captured, read the matching log file in
+`<repo-root>/.codex/logs/` and use it as the source of truth.
 
-## Success Criteria
+5. When the local build succeeds, extract the fresh IPA path from output like:
 
-Treat the upload as successful only when the tmux output says the binary was uploaded to App Store Connect, submitted to Apple App Store Connect, or provides an App Store Connect/TestFlight build link after submission.
+```text
+You can find the build artifacts in /path/to/app/build-<timestamp>.ipa
+```
 
-After success:
+Submit that exact IPA path. Do not submit a generic project artifact path such
+as `build/RecipeLibrary.ipa`, `build/<AppName>.ipa`, or any existing IPA unless
+you have just verified it was written by the current build and has the expected
+new `CFBundleVersion`. These files can be stale from previous runs.
 
-- Report the build number if visible.
-- Report the Expo build/submission URL if visible.
-- Report the App Store Connect/TestFlight URL if visible.
-- Tell the user Apple may still need several minutes to finish processing before the build appears in TestFlight.
+Optional IPA version check:
+
+```sh
+rm -rf /tmp/expo-ipa-check
+mkdir -p /tmp/expo-ipa-check
+unzip -q <fresh-local-ipa> 'Payload/*.app/Info.plist' -d /tmp/expo-ipa-check
+plutil -extract CFBundleVersion raw /tmp/expo-ipa-check/Payload/*.app/Info.plist
+plutil -extract CFBundleShortVersionString raw /tmp/expo-ipa-check/Payload/*.app/Info.plist
+```
+
+6. Submit the fresh IPA from the Expo app root:
+
+```sh
+tmux new-session -d -s <repo-prefix>-testflight-submit-<timestamp> -c <expo-root> 'npx eas submit --platform ios --profile production --path <fresh-local-ipa> --wait 2>&1 | tee <repo-root>/.codex/logs/<repo-prefix>-testflight-submit-<timestamp>.log'
+```
+
+Monitor the submit session until it clearly succeeds, fails, or asks for user
+interaction. Treat success only as output saying the binary was uploaded or
+submitted to Apple App Store Connect, or output providing an App Store
+Connect/TestFlight link after submission.
+
+For resubmitting an EAS cloud build that already exists, use this only when you
+have a real build ID and `submit.production.ios.ascAppId` is configured:
+
+```sh
+npx eas submit -p ios --id <build-id> --wait 2>&1 | tee <repo-root>/.codex/logs/<repo-prefix>-testflight-submit-<build-id>-<timestamp>.log
+```
+
+## EAS Update Workflow
+
+Use this only for OTA-safe JS/asset updates.
+
+1. Confirm the app has an update channel or branch policy in `eas.json`.
+2. Run from the Expo app root.
+3. Publish with an explicit message:
+
+```sh
+npx eas update --channel production --message "<short release note>"
+```
+
+If the project uses branches instead of channels, use the repo's established EAS
+Update convention. Do not invent a channel name when `eas.json` points to a
+different deployment scheme.
+
+After publishing, report the update URL/group ID if EAS prints one, plus the
+runtime version/channel. Remind the user that OTA updates only reach compatible
+installed binaries.
 
 ## User Interaction
 
-If the command asks for Apple login, 2FA, credential confirmation, App Store Connect access, or any other prompt that requires private information or an account decision:
+If EAS asks for Apple login, 2FA, credential confirmation, App Store Connect
+access, or any other prompt that requires private information or an account
+decision:
 
-- Pause and tell the user exactly what prompt is waiting.
-- Do not enter passwords, 2FA codes, API keys, or secrets.
+- Except for the auto-confirmed Apple login prompts below, pause and tell the
+  user exactly what prompt is waiting.
+- Do not enter passwords, 2FA codes, API keys, app-specific passwords, or
+  secrets.
 - Continue monitoring after the user completes the prompt.
 
-For non-secret yes/no prompts, make the conservative choice that matches the existing project setup. When uncertain, ask the user before sending input.
+Specific Apple login handling:
+
+- For `Do you want to log in to your Apple account? (Y/n)`, send `y` and
+  `Enter` to the tmux session without asking the user first.
+- If the next prompt is `Apple ID:` and the expected Apple ID is already
+  prefilled, press `Enter` without asking the user first. This is not a secret.
+- If the `Apple ID:` prompt is empty or shows an unexpected account, ask the
+  user what to use.
+- If the prompt asks for password, 2FA, trusted-device confirmation,
+  app-specific password, API key creation, or any private credential, stop and
+  ask the user to complete that step.
+
+For other non-secret yes/no prompts, make the conservative choice that matches
+the existing project setup. When uncertain, ask the user before sending input.
 
 ## Failure Handling
 
-If the command fails, capture the relevant final 100-200 lines and summarize the root cause. Include the actionable next step.
+If a build or submit fails, capture the relevant final 100-200 lines and
+summarize the root cause with the actionable next step.
 
 Common failures:
 
-- Missing `EXPO_PUBLIC_RECIPE_API_URL`: create it in the EAS `production` environment with the public HTTPS backend URL, then rerun `npx testflight`.
-- No App Store Connect app record: create the app in App Store Connect with bundle ID `com.josiah.recipelibrary`, then rerun.
-- Duplicate build number: confirm `eas.json` production has `autoIncrement: true`, then rerun.
-- Apple credential or API key problems: run or inspect `eas credentials -p ios` only if needed, and do not delete credentials without explicit permission.
-- Backend connectivity after install: verify the app was built with a public HTTPS `EXPO_PUBLIC_RECIPE_API_URL`; TestFlight cannot call `localhost`.
+- EAS cloud iOS quota exhausted: stay on the local build flow above; do not
+  switch back to `npx testflight`.
+- Missing production build profile: add or fix the `production` profile in
+  `eas.json`, with `autoIncrement: true` for iOS releases.
+- Missing `EXPO_PUBLIC_*` production URL: create it in the EAS `production`
+  environment with a public HTTPS backend URL, then rerun the local build.
+- No App Store Connect app record: create the app in App Store Connect with the
+  iOS bundle identifier from `app.json`, then rerun.
+- Duplicate build number: confirm the production profile has
+  `autoIncrement: true`, then rebuild and submit the newly generated IPA.
+- Stale IPA submitted: locate the fresh `build-<timestamp>.ipa`, verify
+  `CFBundleVersion`, and submit that exact path.
+- Apple credential or API key problems: inspect `eas credentials -p ios` only if
+  needed, and do not delete credentials without explicit permission.
+- Backend connectivity after install: verify the app was built with a public
+  HTTPS backend URL; TestFlight cannot call `localhost`.
 
 ## Safety Notes
 
 - Do not push commits unless the user explicitly asks.
 - Do not kill, restart, or send input to unrelated tmux sessions.
 - Do not use Playwright or Puppeteer for this workflow.
-- If a web UI must be operated manually, use the Computer Use plugin per project instructions.
+- If a web UI must be operated manually, use the Computer Use plugin when the
+  project instructions require it.
+- Avoid inspecting full process command lines for local EAS builds because they
+  can include credential material. Use tmux logs, EAS output, and PID-only
+  process checks instead.

@@ -1,20 +1,47 @@
-import '@/utils/install-local-storage';
-
 import { useSyncExternalStore } from 'react';
 
-import type { Recipe, RecipeIngredient, RecipeInput } from '@/types/recipe';
-import { abbreviateAmount } from '@/utils/abbreviate-units';
+import type { Recipe, RecipeGenerationJob, RecipeImageStatus, RecipeInput } from '@/types/recipe';
 import {
-  formatNumberedInstructions,
-  instructionsNeedFormatting,
-} from '@/utils/format-numbered-instructions';
-import { normalizeRecipeSource } from '@/utils/recipe-source';
+  markLegacyRecipesMigrated,
+  readLegacyRecipesForMigration,
+} from '@/utils/legacy-local-data';
+import {
+  createStoredRecipe,
+  createRecipeGenerationJobFromImage,
+  createRecipeGenerationJobFromInput,
+  createRecipeImageGenerationJob,
+  deleteStoredRecipe,
+  fetchRecipeGenerationJobs,
+  fetchStoredRecipes,
+  updateStoredRecipe,
+  updateStoredRecipeImageState,
+  updateStoredRecipeNotes,
+} from '@/utils/recipe-api';
+import {
+  hydrateRecipeImageFromDeviceCache,
+  hydrateRecipeImagesFromDeviceCache,
+} from '@/utils/recipe-image-cache';
+import {
+  formatIngredient,
+  getIngredientParts,
+  normalizeNotesText,
+  normalizeRecipeInput,
+  normalizeRecipeImageStatus,
+  normalizeRecipeImageUri,
+  parseRecipeItems,
+} from '@/utils/recipe-normalization';
 
-const RECIPES_KEY = 'recipe-library:recipes:v1';
+export { formatIngredient, getIngredientParts, parseRecipeItems };
+
 const listeners = new Set<() => void>();
 
 let loaded = false;
+let loading: Promise<void> | null = null;
 let snapshot: Recipe[] = [];
+let recipeGenerationJobs: RecipeGenerationJob[] = [];
+let pendingWorkRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
+
+const pendingWorkRefreshDelayMs = 2500;
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -24,165 +51,175 @@ function emit() {
   listeners.forEach((listener) => listener());
 }
 
-function normalizeRecipe(value: unknown): Recipe | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  const recipe = value as Partial<Recipe> & {
-    body?: unknown;
-    description?: string;
-    items?: unknown;
-  };
-  if (!recipe.id || !recipe.title || !recipe.createdAt) {
-    return null;
-  }
-
-  const ingredients = normalizeIngredients(recipe.ingredients, recipe.items, recipe.body);
-  const instructions = normalizeInstructionsText(resolveRecipeInstructions(recipe));
-  const description = normalizeDescriptionText(recipe.description);
-  const source = normalizeRecipeSource(recipe.source);
-
-  if (!description) {
-    return null;
-  }
-
-  return {
-    id: recipe.id,
-    title: recipe.title,
-    description,
-    instructions,
-    ingredients,
-    ...(source ? { source } : {}),
-    createdAt: recipe.createdAt,
-    updatedAt: recipe.updatedAt ?? recipe.createdAt,
-  };
-}
-
-function storedRecipeNeedsMigration(value: unknown) {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const record = value as { description?: unknown; instructions?: unknown };
-
-  if (typeof record.description !== 'string' || record.description.trim().length === 0) {
-    return true;
-  }
-
-  if (
-    'description' in record &&
-    (!('instructions' in record) || typeof record.instructions !== 'string')
-  ) {
-    return true;
-  }
-
-  return (
-    typeof record.instructions === 'string' &&
-    record.instructions.trim().length > 0 &&
-    instructionsNeedFormatting(record.instructions)
-  );
-}
-
-function resolveRecipeInstructions(recipe: {
-  instructions?: string;
-  description?: string;
-  body?: unknown;
-}) {
-  if (typeof recipe.instructions === 'string' && recipe.instructions.trim()) {
-    return recipe.instructions.trim();
-  }
-
-  if (typeof recipe.description === 'string' && recipe.description.trim()) {
-    return recipe.description.trim();
-  }
-
-  if (typeof recipe.body === 'string' && recipe.body.trim()) {
-    return recipe.body.trim();
-  }
-
-  return '';
-}
-
-function normalizeInstructionsText(instructions: string) {
-  return formatNumberedInstructions(instructions);
-}
-
-function normalizeDescriptionText(description: unknown) {
-  return typeof description === 'string' ? description.trim().replace(/\s+/g, ' ') : '';
-}
-
 function readRecipes(): Recipe[] {
-  if (loaded) {
-    return snapshot;
-  }
-
-  loaded = true;
-
-  try {
-    const raw = localStorage.getItem(RECIPES_KEY);
-    if (!raw) {
-      snapshot = [];
-      return snapshot;
-    }
-
-    const parsed = JSON.parse(raw);
-    const needsMigration = Array.isArray(parsed) && parsed.some(storedRecipeNeedsMigration);
-    snapshot = Array.isArray(parsed)
-      ? parsed
-          .map(normalizeRecipe)
-          .filter((recipe): recipe is Recipe => recipe !== null)
-          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      : [];
-
-    if (needsMigration) {
-      localStorage.setItem(RECIPES_KEY, JSON.stringify(snapshot));
-    }
-  } catch {
-    snapshot = [];
+  if (!loaded) {
+    void refreshRecipes();
   }
 
   return snapshot;
 }
 
-function writeRecipes(recipes: Recipe[]) {
+function replaceSnapshot(recipes: Recipe[]) {
   snapshot = recipes;
   loaded = true;
-  localStorage.setItem(RECIPES_KEY, JSON.stringify(recipes));
   emit();
+  schedulePendingWorkRefresh();
 }
 
-export function parseRecipeItems(body: string) {
-  return body
-    .split(/\r?\n/)
-    .map((item) => item.replace(/^\s*(?:[-*•]\s+|\d+[.)]\s+)/, '').trim())
-    .filter(Boolean);
+export async function refreshRecipes() {
+  if (loading) {
+    return loading;
+  }
+
+  loading = (async () => {
+    try {
+      const recipes = await fetchStoredRecipes();
+      const hydratedRecipes = await hydrateRecipeImagesFromDeviceCache(recipes);
+
+      if (hydratedRecipes.length === 0) {
+        const migrated = await migrateLegacyRecipes();
+
+        if (migrated.length > 0) {
+          replaceSnapshot(await hydrateRecipeImagesFromDeviceCache(migrated));
+          return;
+        }
+      }
+
+      const missingReadyImages = hydratedRecipes.some(
+        (recipe) => recipe.imageStatus === 'ready' && !recipe.imageUri,
+      );
+
+      if (missingReadyImages) {
+        const recipesWithInlineImages = await fetchStoredRecipes({ includeImages: true });
+        replaceSnapshot(await hydrateRecipeImagesFromDeviceCache(recipesWithInlineImages));
+        return;
+      }
+
+      replaceSnapshot(hydratedRecipes);
+    } catch (error) {
+      console.error('Failed to read recipes from Neon Postgres.', { error });
+      loaded = true;
+      emit();
+    } finally {
+      loading = null;
+    }
+  })();
+
+  return loading;
 }
 
-export function getIngredientParts(ingredient: RecipeIngredient) {
-  const amount = abbreviateAmount(ingredient.amount);
-  const name = ingredient.name.trim();
+async function refreshRecipeGenerationJobs() {
+  const hadActiveJobs = hasActiveRecipeGenerationJobs();
 
-  return { amount, name };
+  try {
+    recipeGenerationJobs = await fetchRecipeGenerationJobs();
+    emit();
+
+    if (hadActiveJobs || hasCompletedRecipeGenerationJobs()) {
+      await refreshRecipes();
+    }
+  } catch (error) {
+    console.warn('Failed to refresh recipe generation jobs.', { error });
+  } finally {
+    schedulePendingWorkRefresh();
+  }
 }
 
-export function formatIngredient(ingredient: RecipeIngredient) {
-  const { amount, name } = getIngredientParts(ingredient);
+function upsertRecipeGenerationJob(job: RecipeGenerationJob | null) {
+  if (!job) {
+    return;
+  }
 
-  return amount ? `${amount} ${name}` : name;
+  recipeGenerationJobs = [
+    job,
+    ...recipeGenerationJobs.filter((item) => item.id !== job.id),
+  ];
+  emit();
+  schedulePendingWorkRefresh();
 }
 
-function normalizeIngredientAmount(amount: string) {
-  return abbreviateAmount(amount.trim());
+function hasPendingRecipeWork() {
+  return snapshot.some((recipe) => recipe.imageStatus === 'pending') || hasActiveRecipeGenerationJobs();
+}
+
+function hasActiveRecipeGenerationJobs() {
+  return recipeGenerationJobs.some(
+    (job) => job.status === 'pending' || job.status === 'running',
+  );
+}
+
+function hasCompletedRecipeGenerationJobs() {
+  return recipeGenerationJobs.some(
+    (job) =>
+      (job.kind === 'recipe_input' || job.kind === 'recipe_image') &&
+      job.status === 'completed' &&
+      Boolean(job.recipeId),
+  );
+}
+
+function schedulePendingWorkRefresh() {
+  if (pendingWorkRefreshTimeout || !hasPendingRecipeWork()) {
+    return;
+  }
+
+  pendingWorkRefreshTimeout = setTimeout(() => {
+    pendingWorkRefreshTimeout = null;
+    void refreshPendingWork();
+  }, pendingWorkRefreshDelayMs);
+}
+
+async function refreshPendingWork() {
+  const shouldRefreshRecipes = snapshot.some((recipe) => recipe.imageStatus === 'pending');
+
+  await refreshRecipeGenerationJobs();
+
+  if (shouldRefreshRecipes) {
+    await refreshRecipes();
+  }
+}
+
+async function migrateLegacyRecipes() {
+  const legacyRecipes = await readLegacyRecipesForMigration();
+
+  if (legacyRecipes.length === 0) {
+    return [];
+  }
+
+  console.info('Migrating legacy local recipes to remote recipe store.', {
+    count: legacyRecipes.length,
+  });
+
+  const results = await Promise.allSettled(legacyRecipes.map((recipe) => createStoredRecipe(recipe)));
+  const savedRecipes = results
+    .map((result) => (result.status === 'fulfilled' ? result.value : null))
+    .filter((recipe): recipe is Recipe => recipe !== null)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  if (savedRecipes.length === legacyRecipes.length) {
+    await markLegacyRecipesMigrated();
+  } else {
+    console.error('Failed to migrate every legacy local recipe.', {
+      expectedCount: legacyRecipes.length,
+      savedCount: savedRecipes.length,
+    });
+  }
+
+  return savedRecipes;
 }
 
 export function subscribeRecipes(listener: () => void) {
   listeners.add(listener);
+  void refreshRecipes();
+  void refreshRecipeGenerationJobs();
   return () => listeners.delete(listener);
 }
 
 export function getRecipes() {
   return readRecipes();
+}
+
+export function getRecipeGenerationJobs() {
+  return recipeGenerationJobs;
 }
 
 export function getRecipeById(id: string) {
@@ -193,71 +230,173 @@ export function useRecipes() {
   return useSyncExternalStore(subscribeRecipes, getRecipes, () => []);
 }
 
-function normalizeRecipeInput(input: RecipeInput) {
-  const title = input.title.trim();
-  const description = normalizeDescriptionText(input.description);
-  const ingredients = input.ingredients
-    .map((ingredient) => ({
-      name: ingredient.name.trim(),
-      amount: normalizeIngredientAmount(ingredient.amount),
-    }))
-    .filter((ingredient) => ingredient.name.length > 0);
-
-  if (!description) {
-    throw new Error('Recipe description is required.');
-  }
-
-  const source = normalizeRecipeSource(input.source);
-
-  return {
-    title,
-    description,
-    instructions: normalizeInstructionsText(input.instructions),
-    ingredients,
-    ...(source ? { source } : {}),
-  };
+export function useRecipeGenerationJobs() {
+  return useSyncExternalStore(subscribeRecipes, getRecipeGenerationJobs, () => []);
 }
 
-export function addRecipe(input: RecipeInput) {
+export async function addRecipe(input: RecipeInput) {
   const now = new Date().toISOString();
   const normalized = normalizeRecipeInput(input);
+  const { source, ...recipeFields } = normalized;
   const recipe: Recipe = {
     id: createId(),
-    ...normalized,
+    ...recipeFields,
+    ...(source ? { source } : {}),
     createdAt: now,
     updatedAt: now,
   };
 
-  writeRecipes([recipe, ...readRecipes()]);
-  return recipe;
+  try {
+    const saved = await createStoredRecipe(recipe);
+    const hydrated = await hydrateRecipeImageFromDeviceCache(saved);
+    replaceSnapshot([hydrated, ...snapshot.filter((item) => item.id !== hydrated.id)]);
+    void startRecipeImageGeneration(hydrated.id);
+    return hydrated;
+  } catch (error) {
+    console.error('Failed to add recipe to Neon Postgres.', {
+      recipeId: recipe.id,
+      error,
+    });
+    throw error;
+  }
 }
 
-export function updateRecipe(id: string, input: RecipeInput) {
-  const recipes = readRecipes();
-  const index = recipes.findIndex((recipe) => recipe.id === id);
+export async function startRecipeGenerationFromInput(input: string) {
+  try {
+    const job = await createRecipeGenerationJobFromInput(input);
+    upsertRecipeGenerationJob(job);
+    return job;
+  } catch (error) {
+    console.error('Failed to enqueue recipe generation job.', { error });
+    throw error;
+  }
+}
 
-  if (index === -1) {
+export async function startRecipeGenerationFromImage(input: {
+  imageBase64: string;
+  mimeType: string;
+}) {
+  try {
+    const job = await createRecipeGenerationJobFromImage(input);
+    upsertRecipeGenerationJob(job);
+    return job;
+  } catch (error) {
+    console.error('Failed to enqueue recipe image import job.', { error });
+    throw error;
+  }
+}
+
+export async function startRecipeImageGeneration(id: string) {
+  try {
+    const result = await createRecipeImageGenerationJob(id);
+    upsertRecipeGenerationJob(result.job);
+
+    const hydrated = await hydrateRecipeImageFromDeviceCache(result.recipe);
+    replaceSnapshot(snapshot.map((recipe) => (recipe.id === id ? hydrated : recipe)));
+    return hydrated;
+  } catch (error) {
+    console.error('Failed to enqueue recipe image generation job.', {
+      recipeId: id,
+      error,
+    });
+    return null;
+  }
+}
+
+export async function updateRecipe(id: string, input: RecipeInput) {
+  const normalized = normalizeRecipeInput(input);
+
+  try {
+    const updated = await updateStoredRecipe(id, normalized);
+
+    if (!updated) {
+      return null;
+    }
+
+    const hydrated = await hydrateRecipeImageFromDeviceCache(updated);
+    replaceSnapshot(snapshot.map((recipe) => (recipe.id === id ? hydrated : recipe)));
+    return hydrated;
+  } catch (error) {
+    console.error('Failed to update recipe in Neon Postgres.', {
+      recipeId: id,
+      error,
+    });
+    return null;
+  }
+}
+
+export async function updateRecipeImageState(
+  id: string,
+  input: {
+    imageStatus: RecipeImageStatus;
+    imageUri?: string | null;
+    imageError?: string | null;
+  },
+) {
+  const imageUri = normalizeRecipeImageUri(input.imageUri);
+  const imageStatus = normalizeRecipeImageStatus(input.imageStatus, imageUri);
+  const imageError = normalizeNotesText(input.imageError);
+
+  if (!imageStatus) {
     return null;
   }
 
-  const normalized = normalizeRecipeInput(input);
-  const updated: Recipe = {
-    ...recipes[index],
-    ...normalized,
-    updatedAt: new Date().toISOString(),
-  };
+  try {
+    const updated = await updateStoredRecipeImageState(id, {
+      imageStatus,
+      imageUri,
+      imageError,
+    });
 
-  writeRecipes(
-    recipes
-      .map((recipe) => (recipe.id === id ? updated : recipe))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-  );
+    if (!updated) {
+      return null;
+    }
 
-  return updated;
+    const hydrated = await hydrateRecipeImageFromDeviceCache(updated);
+    replaceSnapshot(snapshot.map((recipe) => (recipe.id === id ? hydrated : recipe)));
+    return hydrated;
+  } catch (error) {
+    console.error('Failed to update recipe image state in Neon Postgres.', {
+      recipeId: id,
+      imageStatus,
+      error,
+    });
+    return null;
+  }
 }
 
-export function deleteRecipe(id: string) {
-  writeRecipes(readRecipes().filter((recipe) => recipe.id !== id));
+export async function updateRecipeNotes(id: string, notes: string) {
+  const normalizedNotes = normalizeNotesText(notes);
+
+  try {
+    const updated = await updateStoredRecipeNotes(id, normalizedNotes ?? '');
+
+    if (!updated) {
+      return null;
+    }
+
+    const hydrated = await hydrateRecipeImageFromDeviceCache(updated);
+    replaceSnapshot(snapshot.map((recipe) => (recipe.id === id ? hydrated : recipe)));
+    return hydrated;
+  } catch (error) {
+    console.error('Failed to update recipe notes in Neon Postgres.', {
+      recipeId: id,
+      error,
+    });
+    return null;
+  }
+}
+
+export async function deleteRecipe(id: string) {
+  try {
+    await deleteStoredRecipe(id);
+    replaceSnapshot(snapshot.filter((recipe) => recipe.id !== id));
+  } catch (error) {
+    console.error('Failed to delete recipe from Neon Postgres.', {
+      recipeId: id,
+      error,
+    });
+  }
 }
 
 export function formatRecipeDate(value: string) {
@@ -271,42 +410,4 @@ export function formatRecipeDate(value: string) {
     month: 'short',
     day: 'numeric',
   }).format(date);
-}
-
-function normalizeIngredients(
-  value: unknown,
-  legacyItems: unknown,
-  legacyBody: unknown,
-): RecipeIngredient[] {
-  if (Array.isArray(value)) {
-    const ingredients = value
-      .map((ingredient) => {
-        if (!ingredient || typeof ingredient !== 'object') {
-          return null;
-        }
-
-        const candidate = ingredient as Partial<RecipeIngredient>;
-        const name = typeof candidate.name === 'string' ? candidate.name.trim() : '';
-        const amount =
-          typeof candidate.amount === 'string' ? normalizeIngredientAmount(candidate.amount) : '';
-
-        return name ? { name, amount } : null;
-      })
-      .filter((ingredient): ingredient is RecipeIngredient => ingredient !== null);
-
-    if (ingredients.length > 0) {
-      return ingredients;
-    }
-  }
-
-  const legacyLines = Array.isArray(legacyItems)
-    ? legacyItems.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : typeof legacyBody === 'string'
-      ? parseRecipeItems(legacyBody)
-      : [];
-
-  return legacyLines.map((item) => ({
-    name: item.trim(),
-    amount: '',
-  }));
 }

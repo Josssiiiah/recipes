@@ -4,6 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "db:generate": "bun src/migrate.ts --dry-run",
+    "db:migrate": "bun src/migrate.ts",
     "dev": "bun run --watch src/index.ts",
     "start": "bun src/index.ts",
     "test": "bun test"
@@ -11,7 +13,9 @@
   "dependencies": {
     "cheerio": "^1.2.0",
     "elysia": "latest",
+    "postgres": "^3.4.9",
     "recipe-scrapers": "^1.9.0",
+    "redis": "^6.0.0",
     "youtube-transcript": "^1.3.1",
     "youtubei.js": "^17.0.1",
     "zod": "^4.4.3"

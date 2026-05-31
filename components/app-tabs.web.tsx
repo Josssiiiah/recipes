@@ -13,9 +13,12 @@ import { Pressable, useColorScheme, View, StyleSheet, Text } from 'react-native'
 import Colors from '@/constants/Colors';
 
 export default function AppTabs() {
+  const scheme = useColorScheme();
+  const colors = Colors[scheme === 'unspecified' ? 'light' : scheme];
+
   return (
-    <Tabs>
-      <TabSlot style={{ height: '100%' }} />
+    <Tabs style={{ flex: 1, backgroundColor: colors.background }}>
+      <TabSlot style={{ flex: 1, backgroundColor: colors.background }} />
       <TabList asChild>
         <CustomTabList>
           <TabTrigger name="index" href="/" asChild>
@@ -43,6 +46,16 @@ export default function AppTabs() {
               List
             </TabButton>
           </TabTrigger>
+          <TabTrigger name="calendar" href="/calendar" asChild>
+            <TabButton
+              iconName={{
+                ios: 'calendar',
+                android: 'calendar_month',
+                web: 'calendar_month',
+              }}>
+              Calendar
+            </TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>
@@ -61,7 +74,9 @@ function TabButton({ children, iconName, isFocused, ...props }: TabButtonProps) 
   return (
     <Pressable {...props} style={({ pressed }) => [styles.tabButton, pressed && styles.pressed]}>
       <View style={[styles.tabButtonView, isFocused && { backgroundColor: colors.surface }]}>
-        <SymbolView name={iconName} size={20} tintColor={tintColor} />
+        <View style={styles.iconSlot}>
+          <SymbolView name={iconName} size={20} tintColor={tintColor} />
+        </View>
         <Text style={[styles.tabLabel, { color: isFocused ? colors.text : colors.muted }]}>{children}</Text>
       </View>
     </Pressable>
@@ -73,7 +88,7 @@ function CustomTabList(props: TabListProps) {
   const colors = Colors[scheme === 'unspecified' ? 'light' : scheme];
 
   return (
-    <View {...props} style={styles.tabListContainer}>
+    <View {...props} style={[styles.tabListContainer, { backgroundColor: colors.background }]}>
       <View style={[styles.innerContainer, { backgroundColor: colors.surface }]}>{props.children}</View>
     </View>
   );
@@ -114,6 +129,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 12,
+  },
+  iconSlot: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabLabel: {
     fontSize: 14,

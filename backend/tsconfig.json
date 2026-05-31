@@ -7,5 +7,5 @@
     "skipLibCheck": true,
     "types": ["bun-types"]
   },
-  "include": ["src/**/*.ts", "../utils/abbreviate-units.ts", "../utils/format-numbered-instructions.ts"]
+  "include": ["src/**/*.ts"]
 }

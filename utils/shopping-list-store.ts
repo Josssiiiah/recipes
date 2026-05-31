@@ -1,19 +1,28 @@
-import '@/utils/install-local-storage';
-
 import { useSyncExternalStore } from 'react';
 
-export type ShoppingListItem = {
-  id: string;
-  text: string;
-  completed: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
+import {
+  markLegacyShoppingListMigrated,
+  readLegacyShoppingListForMigration,
+} from '@/utils/legacy-local-data';
+import {
+  addInventoryItemIfMissing,
+  readAddCompletedShoppingItemsToInventorySetting,
+} from '@/utils/inventory-store';
+import {
+  clearStoredCompletedShoppingListItems,
+  createStoredShoppingListItem,
+  deleteStoredShoppingListItem,
+  fetchStoredShoppingListItems,
+  toggleStoredShoppingListItem,
+  type StoredShoppingListItem,
+} from '@/utils/recipe-api';
 
-const SHOPPING_LIST_KEY = 'recipe-library:shopping-list:v1';
+export type ShoppingListItem = StoredShoppingListItem;
+
 const listeners = new Set<() => void>();
 
 let loaded = false;
+let loading: Promise<void> | null = null;
 let snapshot: ShoppingListItem[] = [];
 
 function createId() {
@@ -24,59 +33,85 @@ function emit() {
   listeners.forEach((listener) => listener());
 }
 
-function normalizeItem(value: unknown): ShoppingListItem | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  const item = value as Partial<ShoppingListItem>;
-  const text = typeof item.text === 'string' ? item.text.trim() : '';
-
-  if (!item.id || !text || !item.createdAt) {
-    return null;
-  }
-
-  return {
-    id: item.id,
-    text,
-    completed: Boolean(item.completed),
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt ?? item.createdAt,
-  };
-}
-
 function readItems() {
-  if (loaded) {
-    return snapshot;
-  }
-
-  loaded = true;
-
-  try {
-    const raw = localStorage.getItem(SHOPPING_LIST_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    snapshot = Array.isArray(parsed)
-      ? parsed
-          .map(normalizeItem)
-          .filter((item): item is ShoppingListItem => item !== null)
-          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      : [];
-  } catch {
-    snapshot = [];
+  if (!loaded) {
+    void refreshShoppingListItems();
   }
 
   return snapshot;
 }
 
-function writeItems(items: ShoppingListItem[]) {
+function replaceSnapshot(items: ShoppingListItem[]) {
   snapshot = items;
   loaded = true;
-  localStorage.setItem(SHOPPING_LIST_KEY, JSON.stringify(items));
   emit();
+}
+
+export async function refreshShoppingListItems() {
+  if (loading) {
+    return loading;
+  }
+
+  loading = (async () => {
+    try {
+      const items = await fetchStoredShoppingListItems();
+
+      if (items.length === 0) {
+        const migrated = await migrateLegacyShoppingListItems();
+
+        if (migrated.length > 0) {
+          replaceSnapshot(migrated);
+          return;
+        }
+      }
+
+      replaceSnapshot(items);
+    } catch (error) {
+      console.error('Failed to read shopping-list items from Neon Postgres.', { error });
+      loaded = true;
+      emit();
+    } finally {
+      loading = null;
+    }
+  })();
+
+  return loading;
+}
+
+async function migrateLegacyShoppingListItems() {
+  const legacyItems = await readLegacyShoppingListForMigration();
+
+  if (legacyItems.length === 0) {
+    return [];
+  }
+
+  console.info('Migrating legacy local shopping-list items to remote recipe store.', {
+    count: legacyItems.length,
+  });
+
+  const results = await Promise.allSettled(
+    legacyItems.map((item) => createStoredShoppingListItem(item)),
+  );
+  const savedItems = results
+    .map((result) => (result.status === 'fulfilled' ? result.value : null))
+    .filter((item): item is ShoppingListItem => item !== null)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  if (savedItems.length === legacyItems.length) {
+    await markLegacyShoppingListMigrated();
+  } else {
+    console.error('Failed to migrate every legacy local shopping-list item.', {
+      expectedCount: legacyItems.length,
+      savedCount: savedItems.length,
+    });
+  }
+
+  return savedItems;
 }
 
 export function subscribeShoppingList(listener: () => void) {
   listeners.add(listener);
+  void refreshShoppingListItems();
   return () => listeners.delete(listener);
 }
 
@@ -88,7 +123,7 @@ export function useShoppingListItems() {
   return useSyncExternalStore(subscribeShoppingList, getShoppingListItems, () => []);
 }
 
-export function addShoppingListItem(text: string) {
+export async function addShoppingListItem(text: string) {
   const normalizedText = text.trim();
 
   if (!normalizedText) {
@@ -104,28 +139,69 @@ export function addShoppingListItem(text: string) {
     updatedAt: now,
   };
 
-  writeItems([...readItems(), item]);
-  return item;
+  try {
+    const saved = await createStoredShoppingListItem(item);
+    replaceSnapshot([...snapshot, saved]);
+    return saved;
+  } catch (error) {
+    console.error('Failed to add shopping-list item to Neon Postgres.', {
+      itemId: item.id,
+      error,
+    });
+    return null;
+  }
 }
 
-export function toggleShoppingListItem(id: string) {
-  writeItems(
-    readItems().map((item) =>
-      item.id === id
-        ? {
-            ...item,
-            completed: !item.completed,
-            updatedAt: new Date().toISOString(),
-          }
-        : item,
-    ),
-  );
+export async function toggleShoppingListItem(id: string) {
+  const previous = snapshot.find((item) => item.id === id);
+
+  try {
+    const updated = await toggleStoredShoppingListItem(id);
+
+    if (!updated) {
+      return;
+    }
+
+    replaceSnapshot(snapshot.map((item) => (item.id === id ? updated : item)));
+
+    if (updated.completed && !previous?.completed) {
+      const shouldAddToInventory = await readAddCompletedShoppingItemsToInventorySetting();
+
+      if (shouldAddToInventory) {
+        const inventoryItem = await addInventoryItemIfMissing(updated.text);
+
+        if (!inventoryItem) {
+          console.error('Failed to add completed shopping-list item to inventory.', {
+            shoppingListItemId: updated.id,
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to toggle shopping-list item in Neon Postgres.', {
+      itemId: id,
+      error,
+    });
+  }
 }
 
-export function deleteShoppingListItem(id: string) {
-  writeItems(readItems().filter((item) => item.id !== id));
+export async function deleteShoppingListItem(id: string) {
+  try {
+    await deleteStoredShoppingListItem(id);
+    replaceSnapshot(snapshot.filter((item) => item.id !== id));
+  } catch (error) {
+    console.error('Failed to delete shopping-list item from Neon Postgres.', {
+      itemId: id,
+      error,
+    });
+  }
 }
 
-export function clearCompletedShoppingListItems() {
-  writeItems(readItems().filter((item) => !item.completed));
+export async function clearCompletedShoppingListItems() {
+  try {
+    await clearStoredCompletedShoppingListItems();
+    replaceSnapshot(snapshot.filter((item) => !item.completed));
+  } catch (error) {
+    console.error('Failed to clear completed shopping-list items from Neon Postgres.', { error });
+  }
 }

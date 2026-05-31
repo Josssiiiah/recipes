@@ -28,4 +28,11 @@ When generating, importing, seeding, backfilling, or editing recipe records, pop
   - `tmux capture-pane -t recipes-typecheck -p -S -200`
 - Use `tmux list-sessions` first if a session name might have changed. Do not kill, restart, or send input to tmux sessions unless I explicitly ask.
 - Treat terminal screenshots as hints, then verify with captured logs so stack traces and repeated warnings are not truncated by the UI.
+- When a running dev service exists, check the relevant tmux logs for runtime errors before using `tsc --noEmit` or `bun run typecheck` as validation. Typecheck can pass while Metro, the simulator, or the API is still failing.
 - After making changes that affect a running dev service, check the relevant tmux logs before reporting completion so runtime errors, reload failures, and repeated warnings are caught immediately.
+
+## TestFlight Uploads
+
+- When the TestFlight flow prompts `Do you want to log in to your Apple account? (Y/n)`, answer `y` and press `Enter` without asking first.
+- If the next `Apple ID:` prompt is already prefilled with the expected Apple ID, press `Enter` without asking first.
+- Still stop for passwords, 2FA codes, trusted-device confirmations, app-specific passwords, API keys, empty or unexpected Apple ID prompts, and any other private credential.

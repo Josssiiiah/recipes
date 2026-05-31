@@ -7,12 +7,12 @@ type LibrarySearchBarProps = {
   value: string;
   colorScheme: 'light' | 'dark';
   onChangeText: (value: string) => void;
-  onSearch: () => void;
+  onSubmit: () => void;
 };
 
-export function LibrarySearchBar({ value, colorScheme, onChangeText, onSearch }: LibrarySearchBarProps) {
+export function LibrarySearchBar({ value, colorScheme, onChangeText, onSubmit }: LibrarySearchBarProps) {
   const colors = Colors[colorScheme];
-  const canSearch = value.trim().length > 0;
+  const canClear = value.length > 0;
 
   return (
     <View
@@ -32,30 +32,32 @@ export function LibrarySearchBar({ value, colorScheme, onChangeText, onSearch }:
         accessibilityLabel="Search recipes"
         value={value}
         onChangeText={onChangeText}
-        placeholder="Search recipes or ingredients"
+        placeholder="Search recipes"
         placeholderTextColor={colors.muted}
         returnKeyType="search"
-        onSubmitEditing={onSearch}
+        onSubmitEditing={onSubmit}
         style={[styles.input, { color: colors.text }]}
       />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Search library"
-        disabled={!canSearch}
-        onPress={onSearch}
-        style={({ pressed }) => [
-          styles.submitButton,
-          {
-            backgroundColor: canSearch ? colors.tint : colorScheme === 'dark' ? '#26312a' : '#e4ebe5',
-            opacity: pressed && canSearch ? 0.75 : 1,
-          },
-        ]}>
-        <SymbolView
-          name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }}
-          tintColor={canSearch ? (colorScheme === 'dark' ? '#102015' : '#ffffff') : colors.muted}
-          size={18}
-        />
-      </Pressable>
+      {canClear ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Clear search"
+          hitSlop={8}
+          onPress={() => onChangeText('')}
+          style={({ pressed }) => [
+            styles.clearButton,
+            {
+              backgroundColor: colorScheme === 'dark' ? '#26312a' : '#e4ebe5',
+              opacity: pressed ? 0.72 : 1,
+            },
+          ]}>
+          <SymbolView
+            name={{ ios: 'xmark', android: 'close', web: 'close' }}
+            tintColor={colors.muted}
+            size={15}
+          />
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -78,11 +80,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  submitButton: {
+  clearButton: {
     alignItems: 'center',
-    borderRadius: 12,
-    height: 34,
+    borderRadius: 999,
+    height: 30,
     justifyContent: 'center',
-    width: 34,
+    width: 30,
   },
 });

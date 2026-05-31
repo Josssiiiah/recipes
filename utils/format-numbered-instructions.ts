@@ -38,6 +38,10 @@ function stepTextFromSegment(segment: string) {
   return trimmed;
 }
 
+function isUsefulInstructionStep(step: string) {
+  return /[A-Za-z]/.test(step);
+}
+
 function splitLineIntoSteps(line: string) {
   const trimmed = line.trim();
   if (!trimmed) {
@@ -50,10 +54,28 @@ function splitLineIntoSteps(line: string) {
     .filter(Boolean);
 
   if (inlineParts.length > 1) {
-    return inlineParts.map(stepTextFromSegment).filter(Boolean);
+    return inlineParts.map(stepTextFromSegment).filter(isUsefulInstructionStep);
   }
 
-  return [stepTextFromSegment(trimmed)].filter(Boolean);
+  return [stepTextFromSegment(trimmed)].filter(isUsefulInstructionStep);
+}
+
+function splitLineIntoStepCandidates(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const inlineParts = trimmed
+    .split(/(?=\d+[.)]\s+)/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (inlineParts.length > 1) {
+    return inlineParts.map(stepTextFromSegment);
+  }
+
+  return [stepTextFromSegment(trimmed)];
 }
 
 function parseInstructionSteps(instructions: string) {
@@ -103,4 +125,11 @@ export function instructionsNeedFormatting(instructions: string) {
   }
 
   return !instructionsAreNumbered(trimmed);
+}
+
+export function hasUnusableInstructionStep(instructions: string) {
+  return instructions
+    .split(/\r?\n/)
+    .flatMap(splitLineIntoStepCandidates)
+    .some((step) => !isUsefulInstructionStep(step));
 }

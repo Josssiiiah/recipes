@@ -1,1 +1,1 @@
-export {};
+// Web already provides localStorage.

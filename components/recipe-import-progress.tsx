@@ -98,10 +98,10 @@ export function RecipeImportProgress({ kind, phase, colorScheme }: RecipeImportP
         </Animated.View>
 
         <Text style={[styles.title, { color: colors.text }]}>
-          {phase === 'ready' ? 'Recipe ready' : 'Importing recipe'}
+          {phase === 'ready' ? 'Generation queued' : 'Starting recipe'}
         </Text>
         <Text style={[styles.subtitle, { color: colors.muted }]}>
-          {phase === 'ready' ? 'Opening your recipe…' : config.label}
+          {phase === 'ready' ? 'Returning to your library...' : config.label}
         </Text>
 
         <View style={styles.steps}>

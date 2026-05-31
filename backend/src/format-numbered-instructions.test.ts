@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   formatNumberedInstructions,
+  hasUnusableInstructionStep,
   instructionsAreNumbered,
-} from '../../utils/format-numbered-instructions';
+} from "./format-numbered-instructions";
 
 describe('formatNumberedInstructions', () => {
   test('numbers plain sentences', () => {
@@ -31,5 +32,16 @@ describe('formatNumberedInstructions', () => {
     expect(formatNumberedInstructions('1. Boil water. 2. Drain pasta.')).toBe(
       '1. Boil water.\n2. Drain pasta.',
     );
+  });
+
+  test('drops numeric-only instruction artifacts', () => {
+    expect(formatNumberedInstructions('1. Boil pasta.\n2. 1\n3. Serve hot.')).toBe(
+      '1. Boil pasta.\n2. Serve hot.',
+    );
+  });
+
+  test('detects unusable instruction artifacts', () => {
+    expect(hasUnusableInstructionStep('1. Boil pasta.\n2. 1\n3. Serve hot.')).toBe(true);
+    expect(hasUnusableInstructionStep('1. Boil pasta.\n2. Serve hot.')).toBe(false);
   });
 });

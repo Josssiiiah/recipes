@@ -8,6 +8,10 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+.codex/logs/
+build/
+build-*.ipa
+build-*.tar.gz
 
 # Native
 .kotlin/

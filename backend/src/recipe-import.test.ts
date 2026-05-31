@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { RecipeObject, SafeParseResult } from "recipe-scrapers";
 
-import { importRecipeFromInput, RecipeImportInputError } from "./recipe-import";
+import {
+  importRecipeFromInput,
+  RecipeImportInputError,
+  transcribeAudioWithOpenAi,
+} from "./recipe-import";
 import type { StructuredRecipe } from "./recipe-ai";
 
 const generatedRecipe: StructuredRecipe = {
@@ -119,6 +123,18 @@ describe("multi-source recipe import", () => {
     await expect(importRecipeFromInput("ftp://example.com/recipe")).rejects.toThrow(
       RecipeImportInputError,
     );
+  });
+
+  test("maps OpenAI transcription timeouts to actionable errors", async () => {
+    await expect(
+      transcribeAudioWithOpenAi(Buffer.from("audio"), "video.mp4", {
+        env: {
+          OPENAI_API_KEY: "openai-key",
+          AI_TIMEOUT_MS: "5",
+        },
+        fetcher: async () => new Promise<Response>(() => {}),
+      }),
+    ).rejects.toThrow("OpenAI transcription request timed out after 5 ms.");
   });
 });
 

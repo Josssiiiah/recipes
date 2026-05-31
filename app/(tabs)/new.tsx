@@ -1,58 +1,41 @@
 import { SymbolView } from 'expo-symbols';
-import { requireOptionalNativeModule } from 'expo-modules-core';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
-  Keyboard,
   StyleSheet,
   Text,
   TextInput,
   Pressable,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RecipeImportProgress } from '@/components/recipe-import-progress';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
-import type { RecipeInput } from '@/types/recipe';
+import { useKeyboardDockPadding } from '@/utils/use-keyboard-dock-padding';
 import {
   detectRecipeImportKind,
   type RecipeImportKind,
 } from '@/utils/detect-recipe-import-kind';
-import { importRecipeFromImage, importRecipeFromInput } from '@/utils/recipe-api';
-import { addRecipe } from '@/utils/recipe-store';
+import { getImageMimeType, loadImagePicker } from '@/utils/image-picker';
+import {
+  startRecipeGenerationFromImage,
+  startRecipeGenerationFromInput,
+} from '@/utils/recipe-store';
 
 export default function NewRecipeScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme];
-  const insets = useSafeAreaInsets();
   const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const composerPaddingBottom = useKeyboardDockPadding();
   const [importProgress, setImportProgress] = useState<{
     kind: RecipeImportKind;
     phase: 'working' | 'ready';
   } | null>(null);
   const canSubmit = prompt.trim().length > 0 && !isSubmitting;
-
-  useEffect(() => {
-    const showEvent = process.env.EXPO_OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = process.env.EXPO_OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvent, (event) => {
-      setKeyboardHeight(event.endCoordinates.height);
-    });
-    const hideSub = Keyboard.addListener(hideEvent, () => {
-      setKeyboardHeight(0);
-    });
-
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
 
   async function handleSubmit() {
     if (!canSubmit) {
@@ -67,8 +50,8 @@ export default function NewRecipeScreen() {
     setImportProgress({ kind: importKind, phase: 'working' });
 
     try {
-      const recipe = await importRecipeFromInput(trimmedPrompt);
-      await finishImport(recipe, importKind);
+      await startRecipeGenerationFromInput(trimmedPrompt);
+      await finishQueuedImport(importKind);
     } catch (error) {
       setImportProgress(null);
       setErrorMessage(getErrorMessage(error));
@@ -77,13 +60,11 @@ export default function NewRecipeScreen() {
     }
   }
 
-  async function finishImport(recipe: RecipeInput, kind: RecipeImportKind) {
-    const savedRecipe = addRecipe(recipe);
-
+  async function finishQueuedImport(kind: RecipeImportKind) {
     setPrompt('');
     setImportProgress({ kind, phase: 'ready' });
     await wait(500);
-    router.replace(`/recipe/${savedRecipe.id}`);
+    router.replace('/');
     setImportProgress(null);
   }
 
@@ -118,11 +99,11 @@ export default function NewRecipeScreen() {
 
       setImportProgress({ kind: 'image', phase: 'working' });
 
-      const recipe = await importRecipeFromImage({
+      await startRecipeGenerationFromImage({
         imageBase64: asset.base64,
         mimeType: getImageMimeType(asset.mimeType, asset.uri),
       });
-      await finishImport(recipe, 'image');
+      await finishQueuedImport('image');
     } catch (error) {
       setImportProgress(null);
       setErrorMessage(getErrorMessage(error));
@@ -137,9 +118,6 @@ export default function NewRecipeScreen() {
       setErrorMessage('');
     }
   }
-
-  const composerPaddingBottom =
-    keyboardHeight > 0 ? keyboardHeight + 12 : Math.max(insets.bottom, 12) + 12;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -190,7 +168,7 @@ export default function NewRecipeScreen() {
             onChangeText={handlePromptChange}
             multiline
             editable={!isSubmitting}
-            placeholder="Paste a recipe, link, or YouTube URL"
+            placeholder="Paste link or recipe"
             placeholderTextColor={colors.muted}
             returnKeyType="send"
             submitBehavior="submit"
@@ -256,54 +234,6 @@ function wait(durationMs: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, durationMs);
   });
-}
-
-async function loadImagePicker() {
-  const nativeImagePicker = requireOptionalNativeModule('ExponentImagePicker');
-
-  if (!nativeImagePicker) {
-    throw new Error(
-      'Image import needs the dev client rebuilt with expo-image-picker before it can read photos.',
-    );
-  }
-
-  try {
-    const ImagePicker = await import('expo-image-picker');
-
-    if (typeof ImagePicker.launchImageLibraryAsync !== 'function') {
-      throw new Error('expo-image-picker did not expose launchImageLibraryAsync.');
-    }
-
-    return ImagePicker;
-  } catch (error) {
-    const message = getErrorMessage(error);
-
-    if (message.includes('ExponentImagePicker')) {
-      throw new Error(
-        'Image import needs the dev client rebuilt with expo-image-picker before it can read photos.',
-      );
-    }
-
-    throw new Error(`Image picker is not available: ${message}`);
-  }
-}
-
-function getImageMimeType(mimeType?: string, uri?: string) {
-  const normalized = mimeType?.toLowerCase();
-
-  if (normalized === 'image/jpeg' || normalized === 'image/png' || normalized === 'image/webp') {
-    return normalized;
-  }
-
-  if (uri?.toLowerCase().endsWith('.png')) {
-    return 'image/png';
-  }
-
-  if (uri?.toLowerCase().endsWith('.webp')) {
-    return 'image/webp';
-  }
-
-  return 'image/jpeg';
 }
 
 const styles = StyleSheet.create({

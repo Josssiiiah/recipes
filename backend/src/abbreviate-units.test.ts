@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { abbreviateAmount } from '../../utils/abbreviate-units';
+import { abbreviateAmount } from "./abbreviate-units";
 
 describe('abbreviateAmount', () => {
   test('abbreviates mass and volume units', () => {

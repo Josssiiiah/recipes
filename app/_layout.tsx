@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import Colors from '@/constants/Colors';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -43,9 +44,22 @@ export default function RootLayout() {
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
+  const baseTheme = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
+  const theme = {
+    ...baseTheme,
+    colors: {
+      ...baseTheme.colors,
+      background: palette.background,
+      card: palette.surface,
+      text: palette.text,
+      border: palette.line,
+      primary: palette.tint,
+    },
+  };
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={theme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen
@@ -54,6 +68,13 @@ function RootLayoutNav() {
             title: 'Recipe',
             headerBackVisible: false,
             headerShadowVisible: false,
+          }}
+        />
+        <Stack.Screen
+          name="calendar/[date]"
+          options={{
+            headerShown: false,
+            presentation: 'modal',
           }}
         />
       </Stack>

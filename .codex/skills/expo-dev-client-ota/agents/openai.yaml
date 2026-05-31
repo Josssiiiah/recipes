@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expo Dev Client OTA"
+  short_description: "Decide Expo builds vs OTA updates"
+  default_prompt: "Use $expo-dev-client-ota to decide whether my Expo change needs a new dev build or can ship over OTA."

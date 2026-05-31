@@ -51,11 +51,11 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow Recipe Library to access your photos so you can import recipe images.",
-          "cameraPermission": false,
+          "cameraPermission": "Allow Recipe Library to use your camera so you can scan food into your inventory.",
           "microphonePermission": false
         }
       ],
-      "expo-sqlite"
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true

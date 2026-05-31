@@ -1,11 +1,13 @@
 import { LogLevel, scrapeRecipe, type RecipeObject, type SafeParseResult } from "recipe-scrapers";
 import { fetchTranscript } from "youtube-transcript";
 
+import { fetchWithAiTimeout } from "./ai-endpoint-guards";
 import {
   generateRecipeFromSourceText,
+  sanitizeErrorMessage,
   type StructuredRecipe,
 } from "./recipe-ai";
-import { normalizeRecipeSource } from "../../utils/recipe-source";
+import { normalizeRecipeSource } from "./recipe-source";
 
 type Env = Record<string, string | undefined>;
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
@@ -241,17 +243,30 @@ export async function transcribeAudioWithOpenAi(
     }),
   );
 
-  const fetcher = options.fetcher ?? fetch;
-  const response = await fetcher(openAiTranscriptionUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
+  const fetcher = (options.fetcher ?? fetch) as (
+    url: string,
+    init: RequestInit,
+  ) => Promise<Response>;
+  const response = await fetchWithAiTimeout(
+    "OpenAI transcription",
+    fetcher,
+    openAiTranscriptionUrl,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: formData,
     },
-    body: formData,
-  });
+    env,
+  );
 
   if (!response.ok) {
-    throw new Error(`OpenAI transcription failed with status ${response.status}: ${await response.text()}`);
+    throw new Error(
+      `OpenAI transcription failed with status ${response.status}: ${sanitizeErrorMessage(
+        await response.text(),
+      )}`,
+    );
   }
 
   const payload = (await response.json()) as { text?: unknown };
@@ -433,5 +448,5 @@ function extractYouTubeVideoId(value: string) {
 }
 
 function getSafeErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  return sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
 }
