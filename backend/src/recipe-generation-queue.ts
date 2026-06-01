@@ -246,8 +246,8 @@ function createId(prefix: string) {
   return `${prefix}-${globalThis.crypto.randomUUID()}`;
 }
 
-function invalidateRecipeList(ownerId: string, context: { route: string; operation: string }) {
-  return invalidateCacheKeys([`${cacheKeys.recipesList}:owner:${ownerId}`], context);
+function invalidateRecipeList(_ownerId: string, context: { route: string; operation: string }) {
+  return invalidateCacheKeys([cacheKeys.recipesList], context);
 }
 
 function getErrorMessage(error: unknown) {

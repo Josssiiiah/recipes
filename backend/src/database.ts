@@ -271,7 +271,7 @@ export async function closeDatabase() {
   await client.end({ timeout: 5 });
 }
 
-export async function listRecipes(ownerId: string) {
+export async function listRecipes() {
   await ensureDatabaseSchema();
 
   const rows = await queryRows<RecipeRow>(getSql()`
@@ -288,13 +288,11 @@ export async function listRecipes(ownerId: string) {
       created_at,
       updated_at
     FROM recipes_v1
-    WHERE owner_id = ${ownerId}
     ORDER BY created_at DESC
   `);
   const ingredientRows = await queryRows<RecipeIngredientRow>(getSql()`
     SELECT recipe_id, name, amount
     FROM recipe_ingredients_v1
-    WHERE owner_id = ${ownerId}
     ORDER BY recipe_id ASC, position ASC
   `);
   const ingredientsByRecipeId = new Map<string, RecipeIngredient[]>();
@@ -368,7 +366,7 @@ export async function updateRecipe(ownerId: string, id: string, input: RecipeInp
   await ensureDatabaseSchema();
 
   const now = new Date().toISOString();
-  const existing = await findRecipe(ownerId, id);
+  const existing = await findRecipe(id);
 
   if (!existing) {
     return null;
@@ -395,13 +393,11 @@ export async function updateRecipe(ownerId: string, id: string, input: RecipeInp
         source = ${updated.source ?? null},
         updated_at = ${updated.updatedAt}
       WHERE id = ${id}
-        AND owner_id = ${ownerId}
     `;
 
     await sql`
       DELETE FROM recipe_ingredients_v1
       WHERE recipe_id = ${id}
-        AND owner_id = ${ownerId}
     `;
 
     for (const [position, ingredient] of updated.ingredients.entries()) {
@@ -427,7 +423,7 @@ export async function updateRecipe(ownerId: string, id: string, input: RecipeInp
 }
 
 export async function updateRecipeImageState(
-  ownerId: string,
+  _ownerId: string,
   id: string,
   input: {
     imageStatus: Recipe["imageStatus"];
@@ -437,7 +433,7 @@ export async function updateRecipeImageState(
 ) {
   await ensureDatabaseSchema();
 
-  const existing = await findRecipe(ownerId, id);
+  const existing = await findRecipe(id);
 
   if (!existing) {
     return null;
@@ -450,7 +446,6 @@ export async function updateRecipeImageState(
       image_status = ${input.imageStatus ?? null},
       image_error = ${input.imageError ?? null}
     WHERE id = ${id}
-      AND owner_id = ${ownerId}
   `;
 
   const updated: Recipe = {
@@ -478,7 +473,7 @@ export async function updateRecipeImageState(
   return updated;
 }
 
-export async function updateRecipeNotes(ownerId: string, id: string, notes: string | null) {
+export async function updateRecipeNotes(_ownerId: string, id: string, notes: string | null) {
   await ensureDatabaseSchema();
 
   const updatedAt = new Date().toISOString();
@@ -486,7 +481,6 @@ export async function updateRecipeNotes(ownerId: string, id: string, notes: stri
     UPDATE recipes_v1
     SET notes = ${notes}, updated_at = ${updatedAt}
     WHERE id = ${id}
-      AND owner_id = ${ownerId}
     RETURNING
       id,
       title,
@@ -509,25 +503,23 @@ export async function updateRecipeNotes(ownerId: string, id: string, notes: stri
     SELECT recipe_id, name, amount
     FROM recipe_ingredients_v1
     WHERE recipe_id = ${id}
-      AND owner_id = ${ownerId}
     ORDER BY position ASC
   `);
 
   return rowToRecipe(rows[0], ingredientRows);
 }
 
-export async function deleteRecipe(ownerId: string, id: string) {
+export async function deleteRecipe(_ownerId: string, id: string) {
   await ensureDatabaseSchema();
   await getSql()`
     DELETE FROM recipes_v1
     WHERE id = ${id}
-      AND owner_id = ${ownerId}
   `;
 }
 
-export async function getRecipe(ownerId: string, id: string) {
+export async function getRecipe(_ownerId: string, id: string) {
   await ensureDatabaseSchema();
-  return findRecipe(ownerId, id);
+  return findRecipe(id);
 }
 
 export async function createRecipeGenerationJob(
@@ -933,7 +925,7 @@ export async function deleteMealPlanEntry(ownerId: string, id: string) {
   `;
 }
 
-async function findRecipe(ownerId: string, id: string) {
+async function findRecipe(id: string) {
   const rows = await queryRows<RecipeRow>(getSql()`
     SELECT
       id,
@@ -949,7 +941,6 @@ async function findRecipe(ownerId: string, id: string) {
       updated_at
     FROM recipes_v1
     WHERE id = ${id}
-      AND owner_id = ${ownerId}
     LIMIT 1
   `);
 
@@ -961,7 +952,6 @@ async function findRecipe(ownerId: string, id: string) {
     SELECT recipe_id, name, amount
     FROM recipe_ingredients_v1
     WHERE recipe_id = ${id}
-      AND owner_id = ${ownerId}
     ORDER BY position ASC
   `);
 

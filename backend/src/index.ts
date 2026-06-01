@@ -129,17 +129,12 @@ export const app = new Elysia()
   })
   .get("/", () => "Recipe Library API")
   .get("/api/recipes", async ({ request, set }) => {
-    const ownerId = readOwnerId(request, set);
-    if (!ownerId) {
-      return { error: "Recipe client ID is required." };
-    }
-
     try {
       const result = await readThroughJsonCache({
-        key: ownerCacheKey(cacheKeys.recipesList, ownerId),
+        key: cacheKeys.recipesList,
         ttlSeconds: cacheTtlSeconds.lists,
         context: { route: "/api/recipes", operation: "list" },
-        load: () => listRecipes(ownerId),
+        load: () => listRecipes(),
       });
 
       const includeInlineImages = new URL(request.url).searchParams.get("includeImages") === "1";
@@ -176,7 +171,7 @@ export const app = new Elysia()
         };
 
         const saved = await createRecipe(ownerId, recipe);
-        await invalidateCacheKeys([ownerCacheKey(cacheKeys.recipesList, ownerId)], {
+        await invalidateCacheKeys([cacheKeys.recipesList], {
           route: "/api/recipes",
           operation: "create",
         });
@@ -230,7 +225,7 @@ export const app = new Elysia()
           return errorResponse(set, 404, "Recipe not found.");
         }
 
-        await invalidateCacheKeys([ownerCacheKey(cacheKeys.recipesList, ownerId)], {
+        await invalidateCacheKeys([cacheKeys.recipesList], {
           route: "/api/recipes/:id",
           operation: "update",
         });
@@ -277,7 +272,7 @@ export const app = new Elysia()
           return errorResponse(set, 404, "Recipe not found.");
         }
 
-        await invalidateCacheKeys([ownerCacheKey(cacheKeys.recipesList, ownerId)], {
+        await invalidateCacheKeys([cacheKeys.recipesList], {
           route: "/api/recipes/:id/image",
           operation: "update_image",
         });
@@ -458,7 +453,7 @@ export const app = new Elysia()
           return errorResponse(set, 404, "Recipe not found.");
         }
 
-        await invalidateCacheKeys([ownerCacheKey(cacheKeys.recipesList, ownerId)], {
+        await invalidateCacheKeys([cacheKeys.recipesList], {
           route: "/api/recipes/:id/notes",
           operation: "update_notes",
         });
@@ -484,7 +479,7 @@ export const app = new Elysia()
 
     try {
       await deleteRecipe(ownerId, params.id);
-      await invalidateCacheKeys([ownerCacheKey(cacheKeys.recipesList, ownerId)], {
+      await invalidateCacheKeys([cacheKeys.recipesList], {
         route: "/api/recipes/:id",
         operation: "delete",
       });
