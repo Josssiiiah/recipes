@@ -121,16 +121,26 @@ export async function assignRecipeToMealPlan(input: {
     createdAt: new Date().toISOString(),
   };
 
+  replaceSnapshot([...snapshot, entry]);
+
   try {
     const saved = await createStoredMealPlanEntry(entry);
-    replaceSnapshot([...snapshot, saved]);
+    replaceSnapshot(
+      snapshot.some((item) => item.id === entry.id)
+        ? snapshot.map((item) => (item.id === entry.id ? saved : item))
+        : [...snapshot, saved],
+    );
     return saved;
   } catch (error) {
     console.error('Failed to add meal-plan entry to Neon Postgres.', {
+      date: entry.date,
       entryId: entry.id,
+      recipeId: entry.recipeId,
+      slot: entry.slot,
       error,
     });
-    return null;
+    replaceSnapshot(snapshot.filter((item) => item.id !== entry.id));
+    throw error;
   }
 }
 

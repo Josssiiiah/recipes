@@ -1,6 +1,7 @@
 import type { Recipe, RecipeGenerationJob, RecipeImageStatus, RecipeInput } from '@/types/recipe';
 import { abbreviateAmount } from '@/utils/abbreviate-units';
 import { getRecipeClientId } from '@/utils/client-owner';
+import { getDefaultRecipeApiBaseUrl } from '@/utils/recipe-api-base';
 import {
   formatNumberedInstructions,
   hasUnusableInstructionStep,
@@ -128,7 +129,8 @@ type RecipeApiFailureDetails = {
 };
 
 const configuredRecipeApiBaseUrl = process.env.EXPO_PUBLIC_RECIPE_API_URL?.replace(/\/+$/, '');
-const localRecipeApiBaseUrl = typeof __DEV__ !== 'undefined' && __DEV__ ? 'http://localhost:4874' : '';
+const localRecipeApiBaseUrl =
+  typeof __DEV__ !== 'undefined' && __DEV__ ? getDefaultRecipeApiBaseUrl() : '';
 const recipeApiBaseUrl = configuredRecipeApiBaseUrl || localRecipeApiBaseUrl;
 const recipeInputImportTimeoutMs = 75_000;
 const imageImportTimeoutMs = 90_000;

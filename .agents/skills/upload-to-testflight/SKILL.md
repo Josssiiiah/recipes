@@ -1,6 +1,6 @@
 ---
 name: upload-to-testflight
-description: Release an Expo app to Apple TestFlight or publish an EAS Update. Use this skill whenever the user asks to upload, submit, ship, publish, push, release, or send an Expo app to TestFlight, App Store Connect, EAS Build, EAS Submit, or EAS Update. This is the default release workflow for the Recipes, Fitness, and Transcribe Expo apps, even when the user only says "push the TestFlight update" or "send a new iOS build."
+description: Release an Expo app to Apple TestFlight or publish an EAS Update. Use this skill whenever the user asks to upload, submit, ship, publish, push, release, update, or send an Expo app to TestFlight, App Store Connect, EAS Build, EAS Submit, or EAS Update. This is the default release workflow for the Recipes, Fitness, and Transcribe Expo apps, including shorthand like "push the update", "push the TestFlight update", "upload to TestFlight", "update/upload to TestFlight", "send a new build", or "ship it."
 ---
 
 # Expo Release To TestFlight
@@ -13,15 +13,34 @@ Use this skill for Expo app releases, especially these local repos:
 /Users/josiah/Dev/transcribe
 ```
 
-Prefer the local iOS build process for TestFlight. Do not use cloud-build wrappers
+The default TestFlight path is a local iOS build followed by direct Apple
+upload with `xcrun altool`. Treat the Apple upload path as mandatory first
+choice, not an optional optimization, whenever a fresh local IPA exists and
+Apple credentials can be found or derived. Do not route an already-built IPA
+through EAS Submit before trying Apple directly. Do not use cloud-build wrappers
 such as `npx testflight` unless the user explicitly asks for the cloud flow or
-local builds are impossible on the current machine. Local builds avoid EAS cloud
-iOS build quota limits and make the generated IPA path explicit.
+local builds are impossible on the current machine. Local builds avoid EAS
+cloud iOS build quota limits and make the generated IPA path explicit. Direct
+Apple upload avoids EAS Submit worker outages and is usually much faster than
+routing an already-built IPA back through EAS Submit.
+
+When the user uses shorthand such as "push the update", "push to TestFlight",
+"upload to TestFlight", "update/upload to TestFlight", "send a build", or
+"ship it" while working in one of these Expo app repos, interpret that as a
+request to run the native TestFlight workflow. The order is always:
+
+1. Build a fresh local production iOS IPA.
+2. Validate and upload that IPA directly to Apple with `xcrun altool`.
+3. Fall back to EAS Submit only after direct Apple upload is impossible, for
+   example no usable `.p8` key can be found/provided, no issuer ID can be found
+   from App Store Connect or EAS metadata, or `altool` itself is unavailable.
 
 ## Release Choice
 
 Default to a native TestFlight build when the user mentions TestFlight, App Store
-Connect, iOS build, binary, native build, or "push the TestFlight update."
+Connect, iOS build, binary, native build, or asks to "push the update",
+"push the TestFlight update", "upload to TestFlight", "update/upload to
+TestFlight", "send a build", or "ship it" from a release context.
 
 Use EAS Update only when the user explicitly asks for an OTA/update publish or
 when the change is clearly JS/TS/assets only and compatible with the currently
@@ -29,6 +48,10 @@ installed native runtime. Do not use EAS Update for changes to native modules,
 Expo config, entitlements, permissions, app icons/splash that require native
 regeneration, build profiles, iOS bundle settings, or dependency changes that
 affect native code.
+
+Do not interpret the word "update" by itself as EAS Update when the request also
+mentions uploading, pushing, TestFlight, App Store Connect, or a new build. In
+that case, use the native TestFlight workflow first.
 
 ## Project Discovery
 
@@ -114,7 +137,70 @@ plutil -extract CFBundleVersion raw /tmp/expo-ipa-check/Payload/*.app/Info.plist
 plutil -extract CFBundleShortVersionString raw /tmp/expo-ipa-check/Payload/*.app/Info.plist
 ```
 
-6. Submit the fresh IPA from the Expo app root:
+6. Upload directly to Apple with `xcrun altool` by default.
+
+This is the required first submit path after a successful local IPA build. Use
+it when a local App Store Connect API key `.p8` exists or the user can provide
+one. For Recipes, a known local key may exist at:
+
+```text
+/Users/josiah/Downloads/AuthKey_64NJRF7W8W.p8
+```
+
+Treat `.p8` files as secrets: do not print their contents, paste them into chat,
+commit them, or move them into the repo. It is OK to use the file path locally.
+The Key ID is usually the filename segment in `AuthKey_<KEY_ID>.p8`. The Issuer
+ID can come from App Store Connect or from EAS credential metadata if already
+configured. If the local `.p8` exists but the issuer ID is not immediately
+known, do not fall back to EAS Submit yet. First inspect EAS credential metadata
+without printing key material and query only the key identifier and issuer
+identifier. A successful EAS Submit configuration proves the issuer metadata is
+usually available even if EAS Submit workers are unhealthy.
+
+Validate the fresh IPA before upload:
+
+```sh
+xcrun altool --validate-app \
+  -f <fresh-local-ipa> \
+  --api-key <key-id> \
+  --api-issuer <issuer-id> \
+  --p8-file-path <path-to-AuthKey_key-id.p8> \
+  --output-format json
+```
+
+Proceed only if validation succeeds. Then upload directly to Apple:
+
+```sh
+tmux new-session -d -s <repo-prefix>-altool-upload-<timestamp> -c <expo-root> 'xcrun altool --upload-app -f <fresh-local-ipa> --api-key <key-id> --api-issuer <issuer-id> --p8-file-path <path-to-AuthKey_key-id.p8> --output-format json --show-progress 2>&1 | tee <repo-root>/.codex/logs/<repo-prefix>-altool-upload-<timestamp>.log'
+```
+
+Monitor the upload session with `tmux capture-pane`. Treat success as output
+containing `UPLOAD SUCCEEDED`, `Upload succeeded`, and a `Delivery UUID`.
+
+After upload succeeds, check Apple processing status:
+
+```sh
+xcrun altool --build-status \
+  --delivery-id <delivery-uuid> \
+  --api-key <key-id> \
+  --api-issuer <issuer-id> \
+  --p8-file-path <path-to-AuthKey_key-id.p8> \
+  --output-format json
+```
+
+Report `VALID` as the successful terminal upload state. If Apple reports
+`PROCESSING`, say the upload is accepted and still processing in App Store
+Connect. If Apple returns package validation errors, report those as app/package
+issues and do not retry blindly.
+
+7. Use EAS Submit only as a last-resort fallback.
+
+Do not start EAS Submit merely because it is configured or because EAS has an
+App Store Connect API key on its servers. EAS Submit is allowed only if direct
+Apple upload cannot be used: there is no local `.p8` and the user cannot provide
+one, no issuer ID can be found from App Store Connect or EAS metadata, the user
+does not want to use Apple tooling, or `altool` is missing/broken. In that case,
+submit the fresh IPA from the Expo app root:
 
 ```sh
 tmux new-session -d -s <repo-prefix>-testflight-submit-<timestamp> -c <expo-root> 'npx eas submit --platform ios --profile production --path <fresh-local-ipa> --wait 2>&1 | tee <repo-root>/.codex/logs/<repo-prefix>-testflight-submit-<timestamp>.log'
@@ -125,7 +211,7 @@ interaction. Treat success only as output saying the binary was uploaded or
 submitted to Apple App Store Connect, or output providing an App Store
 Connect/TestFlight link after submission.
 
-For resubmitting an EAS cloud build that already exists, use this only when you
+For resubmitting an EAS cloud build that already exists, use EAS Submit only when you
 have a real build ID and `submit.production.ios.ascAppId` is configured:
 
 ```sh
@@ -188,6 +274,11 @@ Common failures:
 
 - EAS cloud iOS quota exhausted: stay on the local build flow above; do not
   switch back to `npx testflight`.
+- EAS Submit worker outage or repeated `SPIN_UP_SUBMISSION_WORKER` failures:
+  keep the local IPA, validate it with `xcrun altool --validate-app`, then use
+  direct Apple upload with `xcrun altool --upload-app` if a local `.p8` key is
+  available. Do not rebuild just to work around an EAS Submit infrastructure
+  failure.
 - Missing production build profile: add or fix the `production` profile in
   `eas.json`, with `autoIncrement: true` for iOS releases.
 - Missing `EXPO_PUBLIC_*` production URL: create it in the EAS `production`
@@ -200,6 +291,10 @@ Common failures:
   `CFBundleVersion`, and submit that exact path.
 - Apple credential or API key problems: inspect `eas credentials -p ios` only if
   needed, and do not delete credentials without explicit permission.
+- Direct Apple upload says `VALID` but the build is not visible in TestFlight
+  yet: report that Apple accepted the upload and App Store Connect may still be
+  processing it. Do not resubmit the same build number unless Apple later
+  rejects or loses the build.
 - Backend connectivity after install: verify the app was built with a public
   HTTPS backend URL; TestFlight cannot call `localhost`.
 

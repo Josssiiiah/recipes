@@ -75,7 +75,7 @@ describe("OpenAI recipe image generation", () => {
       model: "gpt-image-2",
       n: 1,
       size: "1536x1152",
-      quality: "low",
+      quality: "medium",
       output_format: "jpeg",
     });
     expect(image).toEqual({

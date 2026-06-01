@@ -54,6 +54,10 @@ const recipeDescriptionGuidance =
   "timing, instructions, or phrases like 'this recipe'. Examples: 'A bright pasta tossed with lemon, basil, and parmesan.' " +
   "'Crisp chicken thighs served with garlicky pan sauce and roasted potatoes.' " +
   "'A cozy tomato soup with a smooth texture and a lightly herbed finish.'";
+const recipeTitleGuidance =
+  "Write a short, literal recipe title based on the dish name or main ingredients. " +
+  "Do not add qualitative or convenience adjectives such as 'Simple', 'Easy', 'Quick', 'Best', " +
+  "'Perfect', 'Delicious', 'Tasty', 'Healthy', 'Homemade', or 'Classic' unless that exact idea is explicit in the source material.";
 const recipeInstructionsGuidance =
   "Write concrete, executable cooking steps as a multiline string. Each line must start with the next step number and a period, " +
   "such as '1. Boil the pasta.' Every step must include a real cooking action and enough context to be useful. " +
@@ -74,7 +78,7 @@ export const recipeResponseSchema = {
       properties: {
         title: {
           type: "string",
-          description: "Short recipe title suitable for a recipe card.",
+          description: recipeTitleGuidance,
         },
         description: {
           type: "string",
@@ -301,6 +305,7 @@ const recipeSystemPrompt = [
   "You convert recipe source material into structured recipes.",
   "Return only the requested structured recipe.",
   "Use concise titles, a short one-sentence description of the finished dish, and numbered cooking instructions.",
+  `For title, follow this guidance: ${recipeTitleGuidance}`,
   `For description, follow this guidance: ${recipeDescriptionGuidance}`,
   `For instructions, follow this guidance: ${recipeInstructionsGuidance}`,
   "Ingredients must be individual pantry/cooking ingredients, not preparation steps.",

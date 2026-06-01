@@ -1,49 +1,147 @@
 import { SymbolView } from 'expo-symbols';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Keyboard, Pressable, StyleSheet, TextInput } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import Colors from '@/constants/Colors';
 
 type LibrarySearchBarProps = {
   value: string;
   colorScheme: 'light' | 'dark';
+  expandedWidth: number;
   onChangeText: (value: string) => void;
   onSubmit: () => void;
 };
 
-export function LibrarySearchBar({ value, colorScheme, onChangeText, onSubmit }: LibrarySearchBarProps) {
+const collapsedSize = 46;
+
+export function LibrarySearchBar({
+  value,
+  colorScheme,
+  expandedWidth,
+  onChangeText,
+  onSubmit,
+}: LibrarySearchBarProps) {
   const colors = Colors[colorScheme];
   const canClear = value.length > 0;
+  const [expanded, setExpanded] = useState(value.length > 0);
+  const inputRef = useRef<TextInput>(null);
+  const animatedWidth = useSharedValue(value.length > 0 ? expandedWidth : collapsedSize);
+  const animatedRadius = useSharedValue(value.length > 0 ? 14 : collapsedSize / 2);
+  const animatedOpacity = useSharedValue(value.length > 0 ? 1 : 0);
+
+  useEffect(() => {
+    if (value.length > 0 && !expanded) {
+      setExpanded(true);
+    }
+  }, [expanded, value.length]);
+
+  useEffect(() => {
+    animatedWidth.value = withTiming(expanded ? expandedWidth : collapsedSize, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+    });
+    animatedRadius.value = withTiming(expanded ? 14 : collapsedSize / 2, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+    });
+    animatedOpacity.value = withTiming(expanded ? 1 : 0, {
+      duration: expanded ? 140 : 90,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [animatedOpacity, animatedRadius, animatedWidth, expanded, expandedWidth]);
+
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+
+    const focusTimer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 160);
+
+    return () => clearTimeout(focusTimer);
+  }, [expanded]);
+
+  const shellStyle = useAnimatedStyle(() => ({
+    borderRadius: animatedRadius.value,
+    width: animatedWidth.value,
+  }));
+
+  const inputContentStyle = useAnimatedStyle(() => ({
+    opacity: animatedOpacity.value,
+  }));
+
+  function collapseIfEmpty() {
+    if (value.trim().length === 0) {
+      setExpanded(false);
+    }
+  }
+
+  function handleAccessoryPress() {
+    if (canClear) {
+      onChangeText('');
+      return;
+    }
+
+    Keyboard.dismiss();
+    setExpanded(false);
+  }
 
   return (
-    <View
+    <Animated.View
       style={[
         styles.inputShell,
+        shellStyle,
         {
           backgroundColor: colors.surface,
           borderColor: colors.line,
         },
       ]}>
-      <SymbolView
-        name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
-        tintColor={colors.muted}
-        size={17}
-      />
-      <TextInput
-        accessibilityLabel="Search recipes"
-        value={value}
-        onChangeText={onChangeText}
-        placeholder="Search recipes"
-        placeholderTextColor={colors.muted}
-        returnKeyType="search"
-        onSubmitEditing={onSubmit}
-        style={[styles.input, { color: colors.text }]}
-      />
-      {canClear ? (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? 'Focus recipe search' : 'Search recipes'}
+        hitSlop={expanded ? 8 : 10}
+        onPress={() => {
+          setExpanded(true);
+          inputRef.current?.focus();
+        }}
+        style={({ pressed }) => [
+          styles.searchButton,
+          {
+            opacity: pressed ? 0.72 : 1,
+          },
+        ]}>
+        <SymbolView
+          name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
+          tintColor={expanded ? colors.muted : colors.tint}
+          size={18}
+        />
+      </Pressable>
+      <Animated.View pointerEvents={expanded ? 'auto' : 'none'} style={[styles.inputContent, inputContentStyle]}>
+        <TextInput
+          ref={inputRef}
+          accessibilityLabel="Search recipes"
+          editable={expanded}
+          value={value}
+          onBlur={collapseIfEmpty}
+          onChangeText={onChangeText}
+          placeholder="Search recipes"
+          placeholderTextColor={colors.muted}
+          returnKeyType="search"
+          onSubmitEditing={onSubmit}
+          style={[styles.input, { color: colors.text }]}
+        />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Clear search"
+          accessibilityLabel={canClear ? 'Clear search' : 'Close search'}
           hitSlop={8}
-          onPress={() => onChangeText('')}
+          onPress={handleAccessoryPress}
           style={({ pressed }) => [
             styles.clearButton,
             {
@@ -57,8 +155,8 @@ export function LibrarySearchBar({ value, colorScheme, onChangeText, onSubmit }:
             size={15}
           />
         </Pressable>
-      ) : null}
-    </View>
+      </Animated.View>
+    </Animated.View>
   );
 }
 
@@ -70,15 +168,28 @@ const styles = StyleSheet.create({
     minHeight: 22,
     paddingVertical: 0,
   },
-  inputShell: {
+  inputContent: {
     alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
+    flex: 1,
     flexDirection: 'row',
     gap: 8,
-    minHeight: 46,
-    paddingHorizontal: 12,
+    minWidth: 0,
+  },
+  inputShell: {
+    alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    height: collapsedSize,
+    overflow: 'hidden',
+    paddingLeft: 0,
+    paddingRight: 8,
     paddingVertical: 6,
+  },
+  searchButton: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    width: collapsedSize,
   },
   clearButton: {
     alignItems: 'center',

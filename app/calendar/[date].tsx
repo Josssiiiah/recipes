@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useMemo, useState } from 'react';
 import {
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -65,6 +66,7 @@ export default function DayPlanScreen() {
 
   const entries = useMealPlanEntries();
   const [pickerSlot, setPickerSlot] = useState<MealSlot | null>(null);
+  const [assigningRecipeId, setAssigningRecipeId] = useState<string | null>(null);
 
   const entriesBySlot = useMemo(() => {
     const map: Record<MealSlot, typeof entries> = { breakfast: [], lunch: [], dinner: [] };
@@ -159,7 +161,9 @@ export default function DayPlanScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Add a recipe to ${meta.label}`}
-                onPress={() => setPickerSlot(meta.slot)}
+                onPress={() => {
+                  setPickerSlot(meta.slot);
+                }}
                 style={({ pressed }) => [
                   styles.addRow,
                   { borderColor: colors.line, opacity: pressed ? 0.7 : 1 },
@@ -180,33 +184,65 @@ export default function DayPlanScreen() {
         visible={pickerSlot !== null}
         slot={pickerSlot}
         colorScheme={colorScheme}
-        onClose={() => setPickerSlot(null)}
-        onSelect={(recipe) => {
-          if (pickerSlot) {
-            void assignRecipeToMealPlan({
-              date: dateKey,
-              slot: pickerSlot,
-              recipeId: recipe.id,
-              recipeTitle: recipe.title,
-            });
+        pendingRecipeId={assigningRecipeId}
+        onClose={() => {
+          if (assigningRecipeId) {
+            return;
           }
           setPickerSlot(null);
+        }}
+        onSelect={(recipe) => {
+          if (!pickerSlot || !dateKey || assigningRecipeId) {
+            return;
+          }
+
+          setAssigningRecipeId(recipe.id);
+          setPickerSlot(null);
+
+          void assignRecipeToMealPlan({
+            date: dateKey,
+            slot: pickerSlot,
+            recipeId: recipe.id,
+            recipeTitle: recipe.title,
+          })
+            .catch((error) => {
+              console.error('Failed to assign recipe from calendar day.', {
+                date: dateKey,
+                recipeId: recipe.id,
+                slot: pickerSlot,
+                error,
+              });
+              Alert.alert('Recipe not added', getMealPlanErrorMessage(error));
+            })
+            .finally(() => {
+              setAssigningRecipeId(null);
+            });
         }}
       />
     </View>
   );
 }
 
+function getMealPlanErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return 'Could not add this recipe to the day. Check the connection and try again.';
+}
+
 function RecipePickerModal({
   visible,
   slot,
   colorScheme,
+  pendingRecipeId,
   onClose,
   onSelect,
 }: {
   visible: boolean;
   slot: MealSlot | null;
   colorScheme: 'light' | 'dark';
+  pendingRecipeId: string | null;
   onClose: () => void;
   onSelect: (recipe: Recipe) => void;
 }) {
@@ -305,13 +341,16 @@ function RecipePickerModal({
                 key={recipe.id}
                 accessibilityRole="button"
                 accessibilityLabel={`Add ${recipe.title}`}
-                onPress={() => onSelect(recipe)}
+                disabled={pendingRecipeId !== null}
+                onPress={() => {
+                  onSelect(recipe);
+                }}
                 style={({ pressed }) => [
                   styles.pickerRow,
                   {
                     backgroundColor: colors.surface,
                     borderColor: colors.line,
-                    opacity: pressed ? 0.8 : 1,
+                    opacity: pendingRecipeId !== null ? 0.55 : pressed ? 0.8 : 1,
                   },
                 ]}>
                 {recipe.imageUri ? (
@@ -337,7 +376,6 @@ function RecipePickerModal({
                 )}
                 <View style={styles.pickerBody}>
                   <Text
-                    selectable
                     style={[styles.pickerTitle, { color: colors.text }]}
                     numberOfLines={1}>
                     {recipe.title}

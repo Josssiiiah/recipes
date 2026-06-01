@@ -21,6 +21,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import type { Recipe, RecipeIngredient, RecipeInput } from '@/types/recipe';
 import { formatNumberedInstructions, parseNumberedInstructionLine } from '@/utils/format-numbered-instructions';
+import { type IngredientScale, scaleIngredient } from '@/utils/ingredient-scaling';
 import {
   deleteRecipe,
   formatIngredient,
@@ -198,17 +199,22 @@ function ViewSectionHeader({
   title,
   colorScheme,
   iconName,
+  children,
 }: {
   title: string;
   colorScheme: 'light' | 'dark';
   iconName: ComponentProps<typeof SymbolView>['name'];
+  children?: ReactNode;
 }) {
   const colors = Colors[colorScheme];
 
   return (
     <View style={styles.viewSectionHeader}>
-      <SymbolView name={iconName} tintColor={colors.tint} size={14} />
-      <Text style={[styles.viewSectionTitle, { color: colors.tint }]}>{title}</Text>
+      <View style={styles.viewSectionHeaderLabel}>
+        <SymbolView name={iconName} tintColor={colors.tint} size={14} />
+        <Text style={[styles.viewSectionTitle, { color: colors.tint }]}>{title}</Text>
+      </View>
+      {children}
     </View>
   );
 }
@@ -236,6 +242,7 @@ function RecipeViewer({
       colorScheme === 'dark' ? '0 10px 24px rgba(0,0,0,0.22)' : '0 12px 28px rgba(22,42,33,0.07)',
   };
   const [editingField, setEditingField] = useState<EditableField | null>(null);
+  const [ingredientScale, setIngredientScale] = useState<IngredientScale>(1);
   const stopEditing = () => setEditingField(null);
 
   return (
@@ -287,6 +294,27 @@ function RecipeViewer({
         />
 
         <ViewSectionHeader
+          title="Ingredients"
+          iconName={{ ios: 'leaf', android: 'eco', web: 'eco' }}
+          colorScheme={colorScheme}>
+          <IngredientScaleControl
+            colorScheme={colorScheme}
+            value={ingredientScale}
+            onChange={setIngredientScale}
+          />
+        </ViewSectionHeader>
+        <EditableIngredientsPanel
+          colorScheme={colorScheme}
+          ingredients={recipe.ingredients}
+          ingredientScale={ingredientScale}
+          panelStyle={panelStyle}
+          isEditing={editingField === 'ingredients'}
+          onStartEditing={() => setEditingField('ingredients')}
+          onStopEditing={stopEditing}
+          onSave={(ingredients) => onSaveRecipe({ ingredients })}
+        />
+
+        <ViewSectionHeader
           title="Instructions"
           iconName={{
             ios: 'list.number',
@@ -303,21 +331,6 @@ function RecipeViewer({
           onStartEditing={() => setEditingField('instructions')}
           onStopEditing={stopEditing}
           onSave={(instructions) => onSaveRecipe({ instructions })}
-        />
-
-        <ViewSectionHeader
-          title="Ingredients"
-          iconName={{ ios: 'leaf', android: 'eco', web: 'eco' }}
-          colorScheme={colorScheme}
-        />
-        <EditableIngredientsPanel
-          colorScheme={colorScheme}
-          ingredients={recipe.ingredients}
-          panelStyle={panelStyle}
-          isEditing={editingField === 'ingredients'}
-          onStartEditing={() => setEditingField('ingredients')}
-          onStopEditing={stopEditing}
-          onSave={(ingredients) => onSaveRecipe({ ingredients })}
         />
       </View>
     </View>
@@ -895,6 +908,7 @@ function EditableInstructionsPanel({
 function EditableIngredientsPanel({
   colorScheme,
   ingredients,
+  ingredientScale,
   panelStyle,
   isEditing,
   onStartEditing,
@@ -903,6 +917,7 @@ function EditableIngredientsPanel({
 }: {
   colorScheme: 'light' | 'dark';
   ingredients: RecipeIngredient[];
+  ingredientScale: IngredientScale;
   panelStyle: StyleProp<ViewStyle>;
   isEditing: boolean;
   onStartEditing: () => void;
@@ -914,7 +929,15 @@ function EditableIngredientsPanel({
     backgroundColor: colors.surface,
     borderColor: colors.line,
   };
-  const [draftIngredients, setDraftIngredients] = useState<RecipeIngredient[]>(ingredients);
+  const [editingIngredientIndex, setEditingIngredientIndex] = useState<number | null>(null);
+  const [draftIngredient, setDraftIngredient] = useState<RecipeIngredient>(emptyIngredient);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setEditingIngredientIndex(null);
+      setDraftIngredient(emptyIngredient());
+    }
+  }, [isEditing]);
 
   const shoppingListItems = useShoppingListItems();
   const shoppingListItemIdsByText = useMemo(() => {
@@ -927,7 +950,9 @@ function EditableIngredientsPanel({
     return map;
   }, [shoppingListItems]);
 
-  const visibleIngredients = ingredients.filter((ingredient) => ingredient.name.trim());
+  const visibleIngredients = ingredients
+    .map((ingredient, index) => ({ ingredient, index }))
+    .filter(({ ingredient }) => ingredient.name.trim());
 
   function handleToggleIngredientInList(ingredient: RecipeIngredient) {
     const ingredientLabel = formatIngredient(ingredient);
@@ -941,84 +966,239 @@ function EditableIngredientsPanel({
     void addShoppingListItem(ingredientLabel);
   }
 
-  function startEditing() {
-    setDraftIngredients(
-      ingredients.length > 0 ? ingredients.map((ingredient) => ({ ...ingredient })) : [emptyIngredient()],
-    );
+  function startEditingIngredient(index: number) {
+    setDraftIngredient({ ...(ingredients[index] ?? emptyIngredient()) });
+    setEditingIngredientIndex(index);
     onStartEditing();
   }
 
-  function updateIngredient(index: number, patch: Partial<RecipeIngredient>) {
-    setDraftIngredients((current) =>
-      current.map((ingredient, ingredientIndex) =>
-        ingredientIndex === index ? { ...ingredient, ...patch } : ingredient,
-      ),
-    );
+  function startAddingIngredient() {
+    setDraftIngredient(emptyIngredient());
+    setEditingIngredientIndex(ingredients.length);
+    onStartEditing();
   }
 
-  function addIngredient() {
-    setDraftIngredients((current) => [...current, emptyIngredient()]);
+  function updateDraftIngredient(patch: Partial<RecipeIngredient>) {
+    setDraftIngredient((current) => ({ ...current, ...patch }));
   }
 
-  function removeIngredient(index: number) {
-    setDraftIngredients((current) => current.filter((_, ingredientIndex) => ingredientIndex !== index));
+  function stopEditingIngredient() {
+    setEditingIngredientIndex(null);
+    setDraftIngredient(emptyIngredient());
+    onStopEditing();
   }
 
-  async function handleSave() {
-    if (await onSave(draftIngredients)) {
-      onStopEditing();
+  async function handleSaveIngredient() {
+    if (editingIngredientIndex === null) {
+      return;
+    }
+
+    const nextIngredients =
+      editingIngredientIndex >= ingredients.length
+        ? [...ingredients, draftIngredient]
+        : ingredients.map((ingredient, index) =>
+            index === editingIngredientIndex ? draftIngredient : ingredient,
+          );
+
+    if (await onSave(nextIngredients)) {
+      stopEditingIngredient();
     }
   }
 
-  if (isEditing) {
+  async function handleRemoveIngredient() {
+    if (editingIngredientIndex === null || editingIngredientIndex >= ingredients.length) {
+      stopEditingIngredient();
+      return;
+    }
+
+    const nextIngredients = ingredients.filter((_, index) => index !== editingIngredientIndex);
+
+    if (await onSave(nextIngredients)) {
+      stopEditingIngredient();
+    }
+  }
+
+  function renderIngredientEditor(rowNumber: number) {
+    const canDelete = editingIngredientIndex !== null && editingIngredientIndex < ingredients.length;
+
     return (
-      <View style={[styles.viewPanel, panelStyle, styles.ingredientsEditPanel]}>
-        <View style={styles.editorIngredientList}>
-          {draftIngredients.map((ingredient, index) => (
-            <View key={`ingredient-${index}`} style={[styles.editorIngredientCard, inputShell]}>
-              <View style={styles.editorIngredientInputs}>
-                <TextInput
-                  accessibilityLabel={`Ingredient ${index + 1} name`}
-                  value={ingredient.name}
-                  onChangeText={(name) => updateIngredient(index, { name })}
-                  placeholder="Ingredient"
-                  placeholderTextColor={colors.muted}
-                  style={[styles.ingredientNameInput, { color: colors.text }]}
-                />
-                <TextInput
-                  accessibilityLabel={`Ingredient ${index + 1} amount`}
-                  value={ingredient.amount}
-                  onChangeText={(amount) => updateIngredient(index, { amount })}
-                  placeholder="Amt"
-                  placeholderTextColor={colors.muted}
-                  selectTextOnFocus
-                  style={[styles.ingredientAmountInput, { color: colors.text, borderColor: colors.line }]}
-                />
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Remove ingredient ${index + 1}`}
-                onPress={() => removeIngredient(index)}
-                style={({ pressed }) => [
-                  styles.removeIngredientButton,
-                  {
-                    backgroundColor: colorScheme === 'dark' ? '#26312a' : '#edf1ea',
-                    opacity: pressed ? 0.65 : 1,
-                  },
-                ]}>
-                <SymbolView
-                  name={{ ios: 'minus.circle.fill', android: 'remove_circle', web: 'remove_circle' }}
-                  tintColor={colors.accent}
-                  size={20}
-                />
-              </Pressable>
-            </View>
-          ))}
+      <View style={[styles.editorIngredientCard, inputShell]}>
+        <View style={styles.editorIngredientInputs}>
+          <TextInput
+            accessibilityLabel={`Ingredient ${rowNumber} name`}
+            value={draftIngredient.name}
+            onChangeText={(name) => updateDraftIngredient({ name })}
+            placeholder="Ingredient"
+            placeholderTextColor={colors.muted}
+            style={[styles.ingredientNameInput, { color: colors.text }]}
+          />
+          <TextInput
+            accessibilityLabel={`Ingredient ${rowNumber} amount`}
+            value={draftIngredient.amount}
+            onChangeText={(amount) => updateDraftIngredient({ amount })}
+            placeholder="Amt"
+            placeholderTextColor={colors.muted}
+            selectTextOnFocus
+            style={[styles.ingredientAmountInput, { color: colors.text, borderColor: colors.line }]}
+          />
         </View>
+        {canDelete ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ingredient ${rowNumber}`}
+            onPress={handleRemoveIngredient}
+            style={({ pressed }) => [
+              styles.ingredientEditActionButton,
+              {
+                backgroundColor: colorScheme === 'dark' ? '#4c211f' : '#fde8e5',
+                opacity: pressed ? 0.65 : 1,
+              },
+            ]}>
+            <SymbolView
+              name={{ ios: 'trash', android: 'delete', web: 'delete' }}
+              tintColor={colors.accent}
+              size={16}
+            />
+          </Pressable>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Cancel ingredient edit"
+          onPress={stopEditingIngredient}
+          style={({ pressed }) => [
+            styles.ingredientEditActionButton,
+            {
+              backgroundColor: colorScheme === 'dark' ? '#26312a' : '#edf1ea',
+              opacity: pressed ? 0.65 : 1,
+            },
+          ]}>
+          <SymbolView
+            name={{ ios: 'xmark', android: 'close', web: 'close' }}
+            tintColor={colors.muted}
+            size={16}
+          />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Save ingredient edit"
+          onPress={handleSaveIngredient}
+          style={({ pressed }) => [
+            styles.ingredientEditActionButton,
+            {
+              backgroundColor: colors.tint,
+              opacity: pressed ? 0.75 : 1,
+            },
+          ]}>
+          <SymbolView
+            name={{ ios: 'checkmark', android: 'check', web: 'check' }}
+            tintColor={colorScheme === 'dark' ? '#102015' : '#ffffff'}
+            size={17}
+          />
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.viewPanel, panelStyle]}>
+      {visibleIngredients.length > 0 ? (
+        visibleIngredients.map(({ ingredient, index }, visibleIndex) => {
+          const displayIngredient = scaleIngredient(ingredient, ingredientScale);
+          const ingredientLabel = formatIngredient(displayIngredient);
+          const { amount, name } = getIngredientParts(displayIngredient);
+          const isInList = shoppingListItemIdsByText.has(ingredientLabel.toLowerCase());
+          const isEditingIngredient = isEditing && editingIngredientIndex === index;
+
+          return (
+            <View key={`ingredient-${index}`}>
+              {visibleIndex > 0 ? <View style={[styles.viewDivider, { backgroundColor: colors.line }]} /> : null}
+              {isEditingIngredient ? renderIngredientEditor(visibleIndex + 1) : null}
+              {!isEditingIngredient ? (
+                <View style={styles.viewIngredientRow}>
+                  <View style={[styles.viewIngredientDot, { backgroundColor: colors.tint }]} />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit ${ingredientLabel}`}
+                    disabled={isEditing}
+                    onPress={() => startEditingIngredient(index)}
+                    style={({ pressed }) => [
+                      styles.viewIngredientEditTarget,
+                      {
+                        opacity: pressed ? 0.65 : isEditing ? 0.72 : 1,
+                      },
+                    ]}>
+                    <Text style={[styles.viewIngredientText, { color: colors.text }]}>
+                      {amount ? (
+                        <>
+                          <Text style={styles.viewIngredientAmount}>{amount}</Text>
+                          {' '}
+                          {name}
+                        </>
+                      ) : (
+                        name
+                      )}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isInList }}
+                    accessibilityLabel={
+                      isInList
+                        ? `Remove ${ingredientLabel} from shopping list`
+                        : `Add ${ingredientLabel} to shopping list`
+                    }
+                    onPress={() => handleToggleIngredientInList(displayIngredient)}
+                    style={({ pressed }) => [
+                      styles.addToListButton,
+                      {
+                        backgroundColor: isInList
+                          ? colors.tint
+                          : colorScheme === 'dark'
+                            ? '#26312a'
+                            : '#edf1ea',
+                        opacity: pressed ? 0.72 : 1,
+                      },
+                    ]}>
+                    <SymbolView
+                      name={
+                        isInList
+                          ? { ios: 'checkmark', android: 'check', web: 'check' }
+                          : { ios: 'plus', android: 'add', web: 'add' }
+                      }
+                      tintColor={isInList ? (colorScheme === 'dark' ? '#102015' : '#ffffff') : colors.tint}
+                      size={16}
+                    />
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
+          );
+        })
+      ) : (
+        <>
+          {isEditing && editingIngredientIndex === ingredients.length ? renderIngredientEditor(1) : null}
+          {!isEditing ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Add ingredient"
+              onPress={startAddingIngredient}
+              style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}>
+              <Text style={[styles.emptyIngredients, { color: colors.muted }]}>Tap to add ingredients.</Text>
+            </Pressable>
+          ) : null}
+        </>
+      )}
+      {visibleIngredients.length > 0 && editingIngredientIndex === ingredients.length ? (
+        <>
+          <View style={[styles.viewDivider, { backgroundColor: colors.line }]} />
+          {renderIngredientEditor(visibleIngredients.length + 1)}
+        </>
+      ) : null}
+      {visibleIngredients.length > 0 && !isEditing ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Add ingredient"
-          onPress={addIngredient}
+          onPress={startAddingIngredient}
           style={({ pressed }) => [styles.addIngredientRow, { opacity: pressed ? 0.7 : 1 }]}>
           <SymbolView
             name={{ ios: 'plus.circle', android: 'add_circle', web: 'add_circle' }}
@@ -1027,77 +1207,63 @@ function EditableIngredientsPanel({
           />
           <Text style={[styles.addIngredientText, { color: colors.tint }]}>Add ingredient</Text>
         </Pressable>
-        <InlineEditActions colorScheme={colorScheme} onCancel={onStopEditing} onSave={handleSave} />
-      </View>
-    );
-  }
+      ) : null}
+    </View>
+  );
+}
+
+function IngredientScaleControl({
+  colorScheme,
+  value,
+  onChange,
+}: {
+  colorScheme: 'light' | 'dark';
+  value: IngredientScale;
+  onChange: (scale: IngredientScale) => void;
+}) {
+  const colors = Colors[colorScheme];
+  const options: IngredientScale[] = [1, 2, 3];
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Edit recipe ingredients"
-      onPress={startEditing}
-      style={({ pressed }) => [styles.viewPanel, panelStyle, { opacity: pressed ? 0.85 : 1 }]}>
-      {visibleIngredients.length > 0 ? (
-        visibleIngredients.map((ingredient, index) => {
-          const ingredientLabel = formatIngredient(ingredient);
-          const { amount, name } = getIngredientParts(ingredient);
-          const isInList = shoppingListItemIdsByText.has(ingredientLabel.toLowerCase());
+    <View
+      accessibilityRole="tablist"
+      style={[
+        styles.ingredientScaleControl,
+        {
+          backgroundColor: colorScheme === 'dark' ? '#26312a' : '#edf1ea',
+          borderColor: colors.line,
+        },
+      ]}>
+      {options.map((scale) => {
+        const isSelected = value === scale;
 
-          return (
-            <View key={`ingredient-${index}`}>
-              {index > 0 ? <View style={[styles.viewDivider, { backgroundColor: colors.line }]} /> : null}
-              <View style={styles.viewIngredientRow}>
-                <View style={[styles.viewIngredientDot, { backgroundColor: colors.tint }]} />
-                <Text style={[styles.viewIngredientText, { color: colors.text }]}>
-                  {amount ? (
-                    <>
-                      <Text style={styles.viewIngredientAmount}>{amount}</Text>
-                      {' '}
-                      {name}
-                    </>
-                  ) : (
-                    name
-                  )}
-                </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: isInList }}
-                  accessibilityLabel={
-                    isInList
-                      ? `Remove ${ingredientLabel} from shopping list`
-                      : `Add ${ingredientLabel} to shopping list`
-                  }
-                  onPress={() => handleToggleIngredientInList(ingredient)}
-                  style={({ pressed }) => [
-                    styles.addToListButton,
-                    {
-                      backgroundColor: isInList
-                        ? colors.tint
-                        : colorScheme === 'dark'
-                          ? '#26312a'
-                          : '#edf1ea',
-                      opacity: pressed ? 0.72 : 1,
-                    },
-                  ]}>
-                  <SymbolView
-                    name={
-                      isInList
-                        ? { ios: 'checkmark', android: 'check', web: 'check' }
-                        : { ios: 'plus', android: 'add', web: 'add' }
-                    }
-                    tintColor={isInList ? (colorScheme === 'dark' ? '#102015' : '#ffffff') : colors.tint}
-                    size={16}
-                  />
-                </Pressable>
-              </View>
-            </View>
-          );
-        })
-      ) : (
-        <Text style={[styles.emptyIngredients, { color: colors.muted }]}>Tap to add ingredients.</Text>
-      )}
-    </Pressable>
+        return (
+          <Pressable
+            key={scale}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isSelected }}
+            accessibilityLabel={`Show ${scale}x ingredients`}
+            onPress={() => onChange(scale)}
+            style={({ pressed }) => [
+              styles.ingredientScaleButton,
+              {
+                backgroundColor: isSelected ? colors.tint : 'transparent',
+                opacity: pressed ? 0.72 : 1,
+              },
+            ]}>
+            <Text
+              style={[
+                styles.ingredientScaleButtonText,
+                {
+                  color: isSelected ? (colorScheme === 'dark' ? '#102015' : '#ffffff') : colors.tint,
+                },
+              ]}>
+              {scale}x
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -1333,6 +1499,37 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     minWidth: 0,
   },
+  ingredientEditActionButton: {
+    alignItems: 'center',
+    borderRadius: 8,
+    flexShrink: 0,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  ingredientScaleButton: {
+    alignItems: 'center',
+    borderRadius: 6,
+    justifyContent: 'center',
+    minHeight: 30,
+    minWidth: 34,
+    paddingHorizontal: 8,
+  },
+  ingredientScaleButtonText: {
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+    fontWeight: '800',
+    lineHeight: 16,
+  },
+  ingredientScaleControl: {
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    flexShrink: 0,
+    gap: 2,
+    padding: 2,
+  },
   ingredientsEditPanel: {
     gap: 12,
   },
@@ -1552,6 +1749,10 @@ const styles = StyleSheet.create({
     height: 7,
     width: 7,
   },
+  viewIngredientEditTarget: {
+    flex: 1,
+    minWidth: 0,
+  },
   viewIngredientRow: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -1580,7 +1781,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: 6,
+    justifyContent: 'space-between',
     marginBottom: -4,
+  },
+  viewSectionHeaderLabel: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: 6,
+    minWidth: 0,
   },
   viewSectionTitle: {
     fontSize: 12,

@@ -155,7 +155,7 @@ async function processRecipeImageImportJob(job: RecipeGenerationJob) {
 }
 
 async function saveGeneratedRecipe(job: RecipeGenerationJob, input: StructuredRecipe) {
-  const recipeId = job.recipeId ?? createId("recipe");
+  const recipeId = getGeneratedRecipeId(job);
   const now = new Date().toISOString();
   const recipe: Recipe = {
     id: recipeId,
@@ -168,13 +168,34 @@ async function saveGeneratedRecipe(job: RecipeGenerationJob, input: StructuredRe
     updatedAt: now,
   };
 
-  await createRecipe(job.ownerId, recipe);
+  const existingRecipe = await getRecipe(job.ownerId, recipeId);
+
+  if (!existingRecipe) {
+    try {
+      await createRecipe(job.ownerId, recipe);
+    } catch (error) {
+      const recipeCreatedByConcurrentWorker = await getRecipe(job.ownerId, recipeId);
+
+      if (!recipeCreatedByConcurrentWorker) {
+        throw error;
+      }
+    }
+  }
+
+  await completeGeneratedRecipeJob(job, recipeId);
+}
+
+async function completeGeneratedRecipeJob(job: RecipeGenerationJob, recipeId: string) {
   await completeRecipeGenerationJob(job.id, { recipeId });
   await invalidateRecipeList(job.ownerId, {
     route: "recipe-generation-queue",
     operation: "complete_recipe_generation",
   });
   await enqueueRecipeHeroImageJob(job.ownerId, recipeId);
+}
+
+function getGeneratedRecipeId(job: RecipeGenerationJob) {
+  return job.recipeId ?? `recipe-${job.id}`;
 }
 
 async function processRecipeHeroImageJob(job: RecipeGenerationJob) {

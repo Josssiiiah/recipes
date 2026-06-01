@@ -1,10 +1,13 @@
 import { SymbolView } from 'expo-symbols';
-import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Keyboard,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -62,6 +65,7 @@ const inventoryDateMonths = [
   'Nov',
   'Dec',
 ];
+const inventorySwipeRevealWidth = 76;
 
 function formatInventoryAddedDate(date: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
@@ -1146,87 +1150,157 @@ function InventoryItemCard({
 
   if (variant === 'list') {
     return (
-      <View
-        style={[
-          styles.inventoryRow,
-          {
-            backgroundColor: colors.surface,
-            borderColor: colors.line,
-            boxShadow: colorScheme === 'dark' ? '0 10px 22px rgba(0,0,0,0.22)' : '0 12px 26px rgba(22,42,33,0.08)',
-          },
-        ]}>
-        <SymbolView
-          name={{ ios: 'refrigerator', android: 'kitchen', web: 'kitchen' }}
-          tintColor={colors.tint}
-          size={20}
-        />
-        <View style={styles.rowTextBlock}>
-          <Text selectable style={[styles.rowText, { color: colors.text }]} numberOfLines={2}>
-            {item.text}
-          </Text>
-          <Text selectable style={[styles.rowMeta, { color: colors.tabIconDefault }]} numberOfLines={1}>
-            {formatInventoryAddedDate(item.createdAt)}
-          </Text>
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Delete ${item.text}`}
-          hitSlop={8}
-          onPress={() => {
-            void onDelete(item.id);
-          }}
-          style={({ pressed }) => [
-            styles.deleteButton,
+      <SwipeDeleteContainer
+        itemText={item.text}
+        colorScheme={colorScheme}
+        onDelete={() => onDelete(item.id)}>
+        <View
+          style={[
+            styles.inventoryRow,
             {
-              backgroundColor: colorScheme === 'dark' ? '#26312a' : '#edf1ea',
-              opacity: pressed ? 0.65 : 1,
+              backgroundColor: colors.surface,
+              borderColor: colors.line,
+              boxShadow: colorScheme === 'dark' ? '0 10px 22px rgba(0,0,0,0.22)' : '0 12px 26px rgba(22,42,33,0.08)',
             },
           ]}>
-          <SymbolView name={{ ios: 'trash', android: 'delete', web: 'delete' }} tintColor={colors.accent} size={17} />
-        </Pressable>
-      </View>
+          <SymbolView
+            name={{ ios: 'refrigerator', android: 'kitchen', web: 'kitchen' }}
+            tintColor={colors.tint}
+            size={20}
+          />
+          <View style={styles.rowTextBlock}>
+            <Text selectable style={[styles.rowText, { color: colors.text }]} numberOfLines={2}>
+              {item.text}
+            </Text>
+            <Text selectable style={[styles.rowMeta, { color: colors.tabIconDefault }]} numberOfLines={1}>
+              {formatInventoryAddedDate(item.createdAt)}
+            </Text>
+          </View>
+        </View>
+      </SwipeDeleteContainer>
     );
   }
 
   return (
-    <View
-      style={[
-        styles.card,
-        {
-          backgroundColor: colors.surface,
-          borderColor: colors.line,
-          boxShadow: colorScheme === 'dark' ? '0 12px 28px rgba(0,0,0,0.26)' : '0 14px 30px rgba(22,42,33,0.1)',
-        },
-      ]}>
-      <View style={[styles.cardIconWrap, { backgroundColor: colorScheme === 'dark' ? '#26312a' : '#edf1ea' }]}>
-        <SymbolView
-          name={{ ios: 'refrigerator', android: 'kitchen', web: 'kitchen' }}
-          tintColor={colors.tint}
-          size={24}
-        />
-      </View>
-      <Text selectable style={[styles.cardText, { color: colors.text }]} numberOfLines={3}>
-        {item.text}
-      </Text>
-      <Text selectable style={[styles.cardMeta, { color: colors.tabIconDefault }]} numberOfLines={1}>
-        {formatInventoryAddedDate(item.createdAt)}
-      </Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Delete ${item.text}`}
-        hitSlop={8}
-        onPress={() => {
-          void onDelete(item.id);
-        }}
-        style={({ pressed }) => [
-          styles.cardDeleteButton,
+    <SwipeDeleteContainer
+      itemText={item.text}
+      colorScheme={colorScheme}
+      onDelete={() => onDelete(item.id)}>
+      <View
+        style={[
+          styles.card,
           {
-            backgroundColor: colorScheme === 'dark' ? '#26312a' : '#edf1ea',
-            opacity: pressed ? 0.65 : 1,
+            backgroundColor: colors.surface,
+            borderColor: colors.line,
+            boxShadow: colorScheme === 'dark' ? '0 12px 28px rgba(0,0,0,0.26)' : '0 14px 30px rgba(22,42,33,0.1)',
           },
         ]}>
-        <SymbolView name={{ ios: 'trash', android: 'delete', web: 'delete' }} tintColor={colors.accent} size={16} />
-      </Pressable>
+        <View style={[styles.cardIconWrap, { backgroundColor: colorScheme === 'dark' ? '#26312a' : '#edf1ea' }]}>
+          <SymbolView
+            name={{ ios: 'refrigerator', android: 'kitchen', web: 'kitchen' }}
+            tintColor={colors.tint}
+            size={24}
+          />
+        </View>
+        <Text selectable style={[styles.cardText, { color: colors.text }]} numberOfLines={3}>
+          {item.text}
+        </Text>
+        <Text selectable style={[styles.cardMeta, { color: colors.tabIconDefault }]} numberOfLines={1}>
+          {formatInventoryAddedDate(item.createdAt)}
+        </Text>
+      </View>
+    </SwipeDeleteContainer>
+  );
+}
+
+function SwipeDeleteContainer({
+  children,
+  itemText,
+  colorScheme,
+  onDelete,
+}: {
+  children: ReactNode;
+  itemText: string;
+  colorScheme: 'light' | 'dark';
+  onDelete: () => void | Promise<void>;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const isOpenRef = useRef(false);
+  const latestTranslateXRef = useRef(0);
+
+  function animateTo(value: number) {
+    latestTranslateXRef.current = value;
+    isOpenRef.current = value < 0;
+    Animated.spring(translateX, {
+      toValue: value,
+      damping: 18,
+      stiffness: 220,
+      mass: 0.7,
+      useNativeDriver: true,
+    }).start();
+  }
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
+      onPanResponderMove: (_event, gesture) => {
+        const base = isOpenRef.current ? -inventorySwipeRevealWidth : 0;
+        const nextValue = Math.max(-inventorySwipeRevealWidth, Math.min(0, base + gesture.dx));
+
+        latestTranslateXRef.current = nextValue;
+        translateX.setValue(nextValue);
+      },
+      onPanResponderRelease: (_event, gesture) => {
+        const shouldOpen =
+          latestTranslateXRef.current < -inventorySwipeRevealWidth / 2 || gesture.vx < -0.45;
+
+        animateTo(shouldOpen ? -inventorySwipeRevealWidth : 0);
+      },
+      onPanResponderTerminate: () => {
+        animateTo(isOpenRef.current ? -inventorySwipeRevealWidth : 0);
+      },
+    }),
+  ).current;
+
+  return (
+    <View style={styles.swipeDeleteShell}>
+      <View
+        pointerEvents="box-none"
+        style={[
+          styles.swipeDeleteAction,
+          {
+            backgroundColor: colorScheme === 'dark' ? '#5a201c' : '#f04438',
+          },
+        ]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${itemText}`}
+          onPress={() => {
+            animateTo(0);
+            void onDelete();
+          }}
+          style={({ pressed }) => [
+            styles.swipeDeleteButton,
+            { opacity: pressed ? 0.7 : 1 },
+          ]}>
+          <SymbolView
+            name={{ ios: 'trash', android: 'delete', web: 'delete' }}
+            tintColor="#ffffff"
+            size={18}
+          />
+        </Pressable>
+      </View>
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={[
+          styles.swipeDeleteContent,
+          {
+            transform: [{ translateX }],
+          },
+        ]}>
+        {children}
+      </Animated.View>
     </View>
   );
 }
@@ -1253,16 +1327,6 @@ const styles = StyleSheet.create({
     minHeight: 148,
     padding: 14,
   },
-  cardDeleteButton: {
-    alignItems: 'center',
-    borderRadius: 8,
-    height: 32,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: 10,
-    top: 10,
-    width: 32,
-  },
   cardIconWrap: {
     alignItems: 'center',
     borderRadius: 8,
@@ -1280,7 +1344,6 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '800',
     lineHeight: 22,
-    paddingRight: 22,
   },
   checkButton: {
     alignItems: 'center',
@@ -1634,6 +1697,29 @@ const styles = StyleSheet.create({
     minHeight: 58,
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  swipeDeleteAction: {
+    alignItems: 'stretch',
+    borderRadius: 8,
+    bottom: 0,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: inventorySwipeRevealWidth,
+  },
+  swipeDeleteButton: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+  },
+  swipeDeleteContent: {
+    borderRadius: 8,
+  },
+  swipeDeleteShell: {
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   subheadRow: {
     alignItems: 'center',

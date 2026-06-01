@@ -208,6 +208,8 @@ export default function LibraryScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery.trim());
   const searchDockPaddingBottom = useKeyboardDockPadding();
+  const searchDockHorizontalPadding = width >= 800 ? 28 : 18;
+  const searchBarExpandedWidth = Math.max(46, width - searchDockHorizontalPadding * 2);
   const [backfillTick, setBackfillTick] = useState(0);
   const [listViewportHeight, setListViewportHeight] = useState(0);
   const [listContentHeight, setListContentHeight] = useState(0);
@@ -415,12 +417,13 @@ export default function LibraryScreen() {
           styles.searchDock,
           {
             paddingBottom: searchDockPaddingBottom,
-            paddingHorizontal: width >= 800 ? 28 : 18,
+            paddingHorizontal: searchDockHorizontalPadding,
           },
         ]}>
         <LibrarySearchBar
           value={searchQuery}
           colorScheme={colorScheme}
+          expandedWidth={searchBarExpandedWidth}
           onChangeText={setSearchQuery}
           onSubmit={handleSearchSubmit}
         />
@@ -437,6 +440,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   searchDock: {
+    alignItems: 'flex-start',
     gap: 0,
     paddingTop: 8,
   },

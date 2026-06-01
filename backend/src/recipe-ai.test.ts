@@ -253,6 +253,9 @@ describe("OpenRouter recipe generation", () => {
             properties?: {
               recipe?: {
                 properties?: {
+                  title?: {
+                    description?: string;
+                  };
                   description?: {
                     description?: string;
                   };
@@ -270,6 +273,9 @@ describe("OpenRouter recipe generation", () => {
       };
     };
     const systemMessage = requestBody.messages?.find((message) => message.role === "system");
+    const titleSchema =
+      requestBody.response_format?.json_schema?.schema?.properties?.recipe?.properties?.title
+        ?.description;
     const descriptionSchema =
       requestBody.response_format?.json_schema?.schema?.properties?.recipe?.properties
         ?.description?.description;
@@ -284,9 +290,15 @@ describe("OpenRouter recipe generation", () => {
       "Examples: 'A bright pasta tossed with lemon, basil, and parmesan.'",
     );
     expect(systemMessage?.content).toContain(
+      "Do not add qualitative or convenience adjectives such as 'Simple'",
+    );
+    expect(systemMessage?.content).toContain(
       "preserve that link in the optional source field.",
     );
     expect(systemMessage?.content).toContain("Never output placeholders, bare numbers");
+    expect(titleSchema).toContain(
+      "unless that exact idea is explicit in the source material.",
+    );
     expect(descriptionSchema).toContain(
       "Do not include cooking steps, timing, instructions, or phrases like 'this recipe'.",
     );

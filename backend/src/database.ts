@@ -132,9 +132,12 @@ type RecipeGenerationJobRow = {
   updated_at: unknown;
   started_at: unknown;
   completed_at: unknown;
+  previous_status?: string;
+  previous_started_at?: unknown;
 };
 
 const legacyRecipeDescription = "A saved recipe from your library.";
+const defaultRecipeGenerationJobLeaseMs = 15 * 60 * 1000;
 
 let sqlClient: SqlClient | null = null;
 let schemaReady: Promise<void> | null = null;
@@ -640,35 +643,70 @@ export async function listRecipeGenerationJobs(ownerId: string) {
 export async function claimNextRecipeGenerationJob() {
   await ensureDatabaseSchema();
 
+  const staleStartedBefore = new Date(
+    Date.now() - getRecipeGenerationJobLeaseMs(),
+  ).toISOString();
   const rows = await queryRows<RecipeGenerationJobRow>(getSql()`
-    UPDATE recipe_generation_jobs_v1
-    SET
-      status = 'running',
-      started_at = COALESCE(started_at, NOW()),
-      updated_at = NOW()
-    WHERE id = (
-      SELECT id
+    WITH next_job AS (
+      SELECT id, status, started_at
       FROM recipe_generation_jobs_v1
       WHERE status = 'pending'
-      ORDER BY created_at ASC
+        OR (
+          status = 'running'
+          AND (
+            started_at IS NULL
+            OR started_at < ${staleStartedBefore}
+          )
+        )
+      ORDER BY
+        CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+        created_at ASC
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
+    UPDATE recipe_generation_jobs_v1
+    SET
+      status = 'running',
+      started_at = NOW(),
+      updated_at = NOW()
+    FROM next_job
+    WHERE recipe_generation_jobs_v1.id = next_job.id
     RETURNING
-      id,
-      owner_id,
-      recipe_id,
-      kind,
-      status,
-      input_json,
-      error,
-      created_at,
-      updated_at,
-      started_at,
-      completed_at
+      recipe_generation_jobs_v1.id,
+      recipe_generation_jobs_v1.owner_id,
+      recipe_generation_jobs_v1.recipe_id,
+      recipe_generation_jobs_v1.kind,
+      recipe_generation_jobs_v1.status,
+      recipe_generation_jobs_v1.input_json,
+      recipe_generation_jobs_v1.error,
+      recipe_generation_jobs_v1.created_at,
+      recipe_generation_jobs_v1.updated_at,
+      recipe_generation_jobs_v1.started_at,
+      recipe_generation_jobs_v1.completed_at,
+      next_job.status AS previous_status,
+      next_job.started_at AS previous_started_at
   `);
 
-  return rows[0] ? rowToRecipeGenerationJob(rows[0]) : null;
+  if (!rows[0]) {
+    return null;
+  }
+
+  const job = rowToRecipeGenerationJob(rows[0]);
+
+  if (rows[0].previous_status === "running") {
+    console.warn("[recipe-generation-queue] Reclaimed stale running job.", {
+      jobId: job.id,
+      ownerId: job.ownerId,
+      recipeId: job.recipeId,
+      kind: job.kind,
+      previousStartedAt: rows[0].previous_started_at
+        ? toIsoString(rows[0].previous_started_at)
+        : null,
+      staleStartedBefore,
+    });
+  }
+
+  return job;
 }
 
 export async function completeRecipeGenerationJob(
@@ -716,6 +754,7 @@ export async function failRecipeGenerationJob(id: string, error: string) {
       completed_at = NOW(),
       updated_at = NOW()
     WHERE id = ${id}
+      AND status != 'completed'
     RETURNING
       id,
       owner_id,
@@ -1042,9 +1081,34 @@ function normalizeRecipeGenerationJobStatus(value: string): RecipeGenerationJobS
 }
 
 function normalizeRecipeGenerationJobInput(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  return {};
+}
+
+function getRecipeGenerationJobLeaseMs() {
+  const raw = process.env.RECIPE_GENERATION_JOB_LEASE_MS?.trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+
+  if (Number.isFinite(parsed) && parsed >= 60_000) {
+    return parsed;
+  }
+
+  return defaultRecipeGenerationJobLeaseMs;
 }
 
 function normalizeNullableText(value: string | null) {

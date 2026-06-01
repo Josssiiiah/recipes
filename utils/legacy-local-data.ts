@@ -1,5 +1,3 @@
-import '@/utils/install-local-storage';
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Recipe } from '@/types/recipe';
