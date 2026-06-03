@@ -1,6 +1,6 @@
 ---
 name: upload-to-testflight
-description: Release an Expo app to Apple TestFlight or publish an EAS Update. Use this skill whenever the user asks to upload, submit, ship, publish, push, release, update, or send an Expo app to TestFlight, App Store Connect, EAS Build, EAS Submit, or EAS Update. This is the default release workflow for the Recipes, Fitness, and Transcribe Expo apps, including shorthand like "push the update", "push the TestFlight update", "upload to TestFlight", "update/upload to TestFlight", "send a new build", or "ship it."
+description: Release an Expo app to Apple TestFlight/App Store Connect or publish an EAS Update. Use this skill whenever the user asks to upload, submit, ship, publish, push, release, update, or send an Expo app to TestFlight, App Store Connect, EAS Build, EAS Submit, or EAS Update. For the Recipes, Fitness, and Transcribe Expo apps, shorthand like "push the update" means the App Store Connect/TestFlight binary-upload flow by default, not an EAS Update or Git push. Also use for "push the TestFlight update", "upload to TestFlight", "update/upload to TestFlight", "send a new build", or "ship it."
 ---
 
 # Expo Release To TestFlight
@@ -27,7 +27,9 @@ routing an already-built IPA back through EAS Submit.
 When the user uses shorthand such as "push the update", "push to TestFlight",
 "upload to TestFlight", "update/upload to TestFlight", "send a build", or
 "ship it" while working in one of these Expo app repos, interpret that as a
-request to run the native TestFlight workflow. The order is always:
+request to run the App Store Connect/TestFlight binary-upload workflow. Do not
+treat "push the update" as an OTA publish, EAS Update, Git push, or generic
+deploy unless the user explicitly says that. The order is always:
 
 1. Build a fresh local production iOS IPA.
 2. Validate and upload that IPA directly to Apple with `xcrun altool`.
@@ -37,21 +39,23 @@ request to run the native TestFlight workflow. The order is always:
 
 ## Release Choice
 
-Default to a native TestFlight build when the user mentions TestFlight, App Store
-Connect, iOS build, binary, native build, or asks to "push the update",
-"push the TestFlight update", "upload to TestFlight", "update/upload to
-TestFlight", "send a build", or "ship it" from a release context.
+Default to a native TestFlight build through App Store Connect when the user
+mentions TestFlight, App Store Connect, iOS build, binary, native build, or asks
+to "push the update", "push the TestFlight update", "upload to TestFlight",
+"update/upload to TestFlight", "send a build", or "ship it" from a release
+context.
 
-Use EAS Update only when the user explicitly asks for an OTA/update publish or
-when the change is clearly JS/TS/assets only and compatible with the currently
-installed native runtime. Do not use EAS Update for changes to native modules,
-Expo config, entitlements, permissions, app icons/splash that require native
-regeneration, build profiles, iOS bundle settings, or dependency changes that
-affect native code.
+Use EAS Update only when the user explicitly asks for OTA, `eas update`, or an
+over-the-air publish. Do not choose EAS Update just because the phrase contains
+"update". Do not use EAS Update for changes to native modules, Expo config,
+entitlements, permissions, app icons/splash that require native regeneration,
+build profiles, iOS bundle settings, or dependency changes that affect native
+code.
 
-Do not interpret the word "update" by itself as EAS Update when the request also
-mentions uploading, pushing, TestFlight, App Store Connect, or a new build. In
-that case, use the native TestFlight workflow first.
+Do not interpret the word "update" by itself as EAS Update when the request says
+"push the update" or also mentions uploading, pushing, TestFlight, App Store
+Connect, Apple Store Connect, or a new build. In that case, use the native
+TestFlight workflow first.
 
 ## Project Discovery
 
